@@ -139,6 +139,7 @@ async function encodeAndFormat(req, files, params, mode) {
         continue;
       } catch (error) {
         logger.error('Error processing image from blob storage:', error);
+        throw new Error(`Failed to download and convert image to base64: ${error.message}`);
       }
     } else if (source !== FileSources.local && base64Only.has(effectiveEndpoint)) {
       const [_file, imageURL] = await preparePayload(req, file);

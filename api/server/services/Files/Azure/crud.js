@@ -226,17 +226,36 @@ async function uploadFileToAzure({
  * Retrieves a readable stream for a blob from Azure Blob Storage.
  *
  * @param {object} _req - The Express request object.
- * @param {string} fileURL - The URL of the blob.
+ * @param {string} filepath - The blob path (e.g., "images/userId/fileName") or full URL.
  * @returns {Promise<ReadableStream>} A readable stream of the blob.
  */
-async function getAzureFileStream(_req, fileURL) {
+async function getAzureFileStream(_req, filepath) {
   try {
-    const response = await axios({
-      method: 'get',
-      url: fileURL,
-      responseType: 'stream',
-    });
-    return response.data;
+    const containerClient = await getAzureContainerClient(AZURE_CONTAINER_NAME);
+    let blobPath;
+    
+    // Handle various path formats
+    if (filepath.startsWith('http')) {
+      // Full Azure blob URL
+      blobPath = filepath.split(`${AZURE_CONTAINER_NAME}/`)[1];
+    } else if (filepath.startsWith('/images/')) {
+      // Relative path like /images/userId/fileName
+      blobPath = filepath.substring(1); // Remove leading slash
+    } else if (filepath.startsWith('images/')) {
+      // Already in correct format
+      blobPath = filepath;
+    } else {
+      throw new Error(`Invalid file path format: ${filepath}`);
+    }
+    
+    if (!blobPath) {
+      throw new Error(`Could not extract blob path from: ${filepath}`);
+    }
+    
+    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
+    const downloadResponse = await blockBlobClient.download();
+    
+    return downloadResponse.readableStreamBody;
   } catch (error) {
     logger.error('[getAzureFileStream] Error getting blob stream:', error);
     throw error;

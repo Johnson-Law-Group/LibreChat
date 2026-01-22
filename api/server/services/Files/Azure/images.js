@@ -54,7 +54,8 @@ async function uploadImageToAzure({
         fileName += targetExtension;
       }
     }
-    const downloadURL = await saveBufferToAzure({
+    // Upload to Azure and get the blob URL
+    await saveBufferToAzure({
       userId,
       buffer: webPBuffer,
       fileName,
@@ -63,7 +64,10 @@ async function uploadImageToAzure({
     });
     await fs.promises.unlink(inputFilePath);
     const bytes = Buffer.byteLength(webPBuffer);
-    return { filepath: downloadURL, bytes, width, height };
+    // Store the path in Azure format so backend can fetch it
+    // Frontend will construct the proper URL based on the filepath
+    const blobPath = `${basePath}/${userId}/${fileName}`;
+    return { filepath: blobPath, bytes, width, height };
   } catch (error) {
     logger.error('[uploadImageToAzure] Error uploading image:', error);
     throw error;
@@ -72,16 +76,20 @@ async function uploadImageToAzure({
 
 /**
  * Prepares the image URL and updates the file record.
+ * For Azure files, the filepath is stored as the blob path (images/userId/fileName)
+ * which the static route will serve via Azure download stream.
  *
  * @param {object} req - The Express request object.
  * @param {MongoFile} file - The file object.
  * @returns {Promise<[MongoFile, string]>}
  */
 async function prepareAzureImageURL(req, file) {
+  // For Azure, filepath is already in the correct format (images/userId/fileName)
+  // Just return it as-is for the static route to serve
   const { filepath } = file;
   const promises = [];
   promises.push(updateFile({ file_id: file.file_id }));
-  promises.push(filepath);
+  promises.push(`/${filepath}`); // Add leading slash for frontend
   return await Promise.all(promises);
 }
 
