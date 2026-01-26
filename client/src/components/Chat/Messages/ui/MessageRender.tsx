@@ -123,7 +123,7 @@ const MessageRender = memo(
       >
         {!hasParallelContent && (
           <div className="relative flex flex-shrink-0 flex-col items-center">
-            <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full">
+            <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full">
               <MessageIcon iconData={iconData} assistant={assistant} agent={agent} />
             </div>
           </div>
@@ -137,7 +137,7 @@ const MessageRender = memo(
           )}
         >
           {!hasParallelContent && (
-            <h2 className={cn('select-none font-semibold', fontSize)}>{messageLabel}</h2>
+            <h2 className={cn('select-none font-bold', fontSize)}>{messageLabel}</h2>
           )}
 
           <div className="flex flex-col gap-1">

@@ -154,8 +154,8 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
     null: { icon: <GPTIcon size={size * 0.7} />, bg: 'grey', name: 'N/A' },
     default: {
       icon: (
-        <div className="h-6 w-6">
-          <div className="overflow-hidden rounded-full">
+        <div className="h-full w-full">
+          <div className="h-full w-full overflow-hidden rounded-full">
             <UnknownIcon
               iconURL={iconURL}
               endpoint={endpoint ?? ''}
@@ -191,7 +191,7 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
         height: size,
       }}
       className={cn(
-        'relative flex h-9 w-9 items-center justify-center rounded-sm p-1 text-white',
+        'relative flex items-center justify-center rounded-sm text-white',
         props.className ?? '',
       )}
     >

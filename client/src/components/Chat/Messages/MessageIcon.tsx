@@ -69,7 +69,7 @@ const MessageIcon = memo(
         model={iconData?.model}
         assistantName={assistantName}
         agentName={agentName}
-        size={28.8}
+        size={40}
       />
     );
   },
