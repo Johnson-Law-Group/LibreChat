@@ -11,7 +11,7 @@ import type { BaseInitializeParams, InitializeResultBase, EndpointTokenConfig } 
 import { getOpenAIConfig } from '~/endpoints/openai/config';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
-import { isUserProvided, checkUserKeyExpiry } from '~/utils';
+import { isUserProvided, checkUserKeyExpiry, resolveHeaders } from '~/utils';
 import { standardCache } from '~/cache';
 
 const { PROXY } = process.env;
@@ -153,13 +153,23 @@ export async function initializeCustom({
 
   const customOptions = buildCustomOptions(endpointConfig, appConfig, endpointTokenConfig);
 
+  // Resolve header templates with user info
+  if (customOptions.headers) {
+    customOptions.headers = resolveHeaders({
+      headers: customOptions.headers as Record<string, string>,
+      user: req.user,
+    });
+  }
+
   const clientOptions: Record<string, unknown> = {
     reverseProxyUrl: baseURL ?? null,
     proxy: PROXY ?? null,
     ...customOptions,
   };
 
-  const modelOptions = { ...(model_parameters ?? {}), user: userId };
+  // Use email for user tracking if available, fallback to userId
+  const userIdentifier = req.user?.email || userId;
+  const modelOptions = { ...(model_parameters ?? {}), user: userIdentifier };
   const finalClientOptions = {
     modelOptions,
     ...clientOptions,
