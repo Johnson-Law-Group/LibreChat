@@ -1,13 +1,154 @@
 const fs = require('fs');
 const path = require('path');
 const mime = require('mime');
-const axios = require('axios');
 const fetch = require('node-fetch');
 const { logger } = require('@librechat/data-schemas');
 const { getAzureContainerClient } = require('@librechat/api');
 
 const defaultBasePath = 'images';
 const { AZURE_STORAGE_PUBLIC_ACCESS = 'true', AZURE_CONTAINER_NAME = 'files' } = process.env;
+
+// Default SAS token expiry: 1 hour (in seconds)
+let azureSasExpirySeconds = 60 * 60;
+if (process.env.AZURE_SAS_EXPIRY_SECONDS !== undefined) {
+  const parsed = parseInt(process.env.AZURE_SAS_EXPIRY_SECONDS, 10);
+  if (!isNaN(parsed) && parsed > 0) {
+    azureSasExpirySeconds = Math.min(parsed, 7 * 24 * 60 * 60); // Max 7 days
+  }
+}
+
+/**
+ * Generates a SAS URL for an Azure blob
+ * @param {string} blobPath - The blob path (e.g., "images/userId/fileName")
+ * @param {string} [containerName] - The Azure Blob container name
+ * @returns {Promise<string>} The blob URL with SAS token
+ */
+async function generateAzureSasUrl(blobPath, containerName) {
+  try {
+    const { BlobSASPermissions, generateBlobSASQueryParameters, StorageSharedKeyCredential } =
+      await import('@azure/storage-blob');
+
+    const containerClient = await getAzureContainerClient(containerName || AZURE_CONTAINER_NAME);
+    const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
+
+    // Get account name and key from connection string or environment
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+    if (!connectionString) {
+      // If using Managed Identity, we can't generate SAS tokens directly
+      // Return the raw URL and rely on public access or other auth mechanisms
+      logger.warn('[generateAzureSasUrl] No connection string available, returning raw URL');
+      return blockBlobClient.url;
+    }
+
+    // Parse connection string to get account name and key
+    const accountNameMatch = connectionString.match(/AccountName=([^;]+)/);
+    const accountKeyMatch = connectionString.match(/AccountKey=([^;]+)/);
+
+    if (!accountNameMatch || !accountKeyMatch) {
+      logger.warn('[generateAzureSasUrl] Could not parse credentials from connection string');
+      return blockBlobClient.url;
+    }
+
+    const accountName = accountNameMatch[1];
+    const accountKey = accountKeyMatch[1];
+    const sharedKeyCredential = new StorageSharedKeyCredential(accountName, accountKey);
+
+    const startsOn = new Date();
+    const expiresOn = new Date(startsOn.getTime() + azureSasExpirySeconds * 1000);
+
+    const sasToken = generateBlobSASQueryParameters(
+      {
+        containerName: containerName || AZURE_CONTAINER_NAME,
+        blobName: blobPath,
+        permissions: BlobSASPermissions.parse('r'), // Read only
+        startsOn,
+        expiresOn,
+      },
+      sharedKeyCredential,
+    ).toString();
+
+    return `${blockBlobClient.url}?${sasToken}`;
+  } catch (error) {
+    logger.error('[generateAzureSasUrl] Error generating SAS URL:', error);
+    throw error;
+  }
+}
+
+/**
+ * Checks if an Azure SAS URL needs to be refreshed
+ * @param {string} sasUrl - The Azure SAS URL
+ * @param {number} bufferSeconds - Buffer time in seconds before expiry to trigger refresh
+ * @returns {boolean} True if the URL needs refreshing
+ */
+function needsAzureRefresh(sasUrl, bufferSeconds = 300) {
+  try {
+    const url = new URL(sasUrl);
+
+    // Check if it has a SAS token (se = expiry parameter)
+    const expiryParam = url.searchParams.get('se');
+    if (!expiryParam) {
+      // No SAS token, check if public access is enabled
+      if (AZURE_STORAGE_PUBLIC_ACCESS?.toLowerCase() === 'true') {
+        return false; // Public access, no refresh needed
+      }
+      // Private blob without SAS token - needs refresh
+      return true;
+    }
+
+    // Parse the expiry time (ISO 8601 format)
+    const expiresAt = new Date(expiryParam);
+    const now = new Date();
+    const bufferTime = new Date(now.getTime() + bufferSeconds * 1000);
+
+    return expiresAt <= bufferTime;
+  } catch (error) {
+    logger.error('[needsAzureRefresh] Error checking URL expiration:', error);
+    // If we can't determine, assume it needs refresh to be safe
+    return true;
+  }
+}
+
+/**
+ * Extracts the blob path from an Azure blob URL
+ * @param {string} azureUrl - The Azure blob URL
+ * @returns {string | null} The blob path or null if extraction fails
+ */
+function extractBlobPathFromAzureUrl(azureUrl) {
+  try {
+    const url = new URL(azureUrl);
+    // URL format: https://account.blob.core.windows.net/container/path/to/blob?sasToken
+    // We need to extract: path/to/blob
+    const pathParts = url.pathname.split('/');
+    // First part is empty, second is container name, rest is blob path
+    if (pathParts.length < 3) {
+      return null;
+    }
+    return pathParts.slice(2).join('/');
+  } catch (error) {
+    logger.error('[extractBlobPathFromAzureUrl] Error extracting blob path:', error);
+    return null;
+  }
+}
+
+/**
+ * Generates a new SAS URL for an expired Azure blob URL
+ * @param {string} currentURL - The current Azure blob URL
+ * @returns {Promise<string | undefined>} The new URL with fresh SAS token
+ */
+async function getNewAzureURL(currentURL) {
+  try {
+    const blobPath = extractBlobPathFromAzureUrl(currentURL);
+    if (!blobPath) {
+      logger.warn('[getNewAzureURL] Could not extract blob path from URL:', currentURL);
+      return;
+    }
+
+    return await generateAzureSasUrl(blobPath);
+  } catch (error) {
+    logger.error('[getNewAzureURL] Error generating new Azure URL:', error);
+    return;
+  }
+}
 
 /**
  * Uploads a buffer to Azure Blob Storage.
@@ -20,7 +161,7 @@ const { AZURE_STORAGE_PUBLIC_ACCESS = 'true', AZURE_CONTAINER_NAME = 'files' } =
  * @param {string} params.fileName - The name of the file.
  * @param {string} [params.basePath='images'] - The base folder within the container.
  * @param {string} [params.containerName] - The Azure Blob container name.
- * @returns {Promise<string>} The URL of the uploaded blob.
+ * @returns {Promise<string>} The URL of the uploaded blob (with SAS token if private).
  */
 async function saveBufferToAzure({
   userId,
@@ -31,12 +172,18 @@ async function saveBufferToAzure({
 }) {
   try {
     const containerClient = await getAzureContainerClient(containerName);
-    const access = AZURE_STORAGE_PUBLIC_ACCESS?.toLowerCase() === 'true' ? 'blob' : undefined;
+    const isPublicAccess = AZURE_STORAGE_PUBLIC_ACCESS?.toLowerCase() === 'true';
+    const access = isPublicAccess ? 'blob' : undefined;
     // Create the container if it doesn't exist. This is done per operation.
     await containerClient.createIfNotExists({ access });
     const blobPath = `${basePath}/${userId}/${fileName}`;
     const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
     await blockBlobClient.uploadData(buffer);
+
+    // Return SAS URL for private blobs, raw URL for public blobs
+    if (!isPublicAccess) {
+      return await generateAzureSasUrl(blobPath, containerName);
+    }
     return blockBlobClient.url;
   } catch (error) {
     logger.error('[saveBufferToAzure] Error uploading buffer:', error);
@@ -269,4 +416,7 @@ module.exports = {
   deleteFileFromAzure,
   uploadFileToAzure,
   getAzureFileStream,
+  generateAzureSasUrl,
+  needsAzureRefresh,
+  getNewAzureURL,
 };

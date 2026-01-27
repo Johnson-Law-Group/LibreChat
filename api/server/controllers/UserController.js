@@ -36,6 +36,7 @@ const { updateUserPluginAuth, deleteUserPluginAuth } = require('~/server/service
 const { verifyEmail, resendVerificationEmail } = require('~/server/services/AuthService');
 const { getMCPManager, getFlowStateManager, getMCPServersRegistry } = require('~/config');
 const { needsRefresh, getNewS3URL } = require('~/server/services/Files/S3/crud');
+const { needsAzureRefresh, getNewAzureURL } = require('~/server/services/Files/Azure/crud');
 const { processDeleteRequest } = require('~/server/services/Files/process');
 const { getAppConfig } = require('~/server/services/Config');
 const { deleteToolCalls } = require('~/models/ToolCall');
@@ -68,6 +69,26 @@ const getUserController = async (req, res) => {
       logger.error('Error getting new S3 URL for avatar:', error);
     }
   }
+
+  // Handle Azure blob avatar URL refresh
+  if (appConfig.fileStrategy === FileSources.azure_blob && userData.avatar) {
+    const avatarNeedsRefresh = needsAzureRefresh(userData.avatar, 3600); // 1 hour buffer (matches S3)
+    if (!avatarNeedsRefresh) {
+      return res.status(200).send(userData);
+    }
+    const originalAvatar = userData.avatar;
+    try {
+      const newUrl = await getNewAzureURL(userData.avatar);
+      if (newUrl) {
+        userData.avatar = newUrl;
+        await updateUser(userData.id, { avatar: userData.avatar });
+      }
+    } catch (error) {
+      userData.avatar = originalAvatar;
+      logger.error('Error getting new Azure URL for avatar:', error);
+    }
+  }
+
   res.status(200).send(userData);
 };
 
