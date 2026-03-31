@@ -158,6 +158,7 @@ export async function initializeCustom({
     customOptions.headers = resolveHeaders({
       headers: customOptions.headers as Record<string, string>,
       user: req.user,
+      body: req.body,
     });
   }
 
