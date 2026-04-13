@@ -46,10 +46,10 @@ type SafeUser = Pick<IUser, AllowedUserField>;
  *   if (headerValue.startsWith('b64:')) {
  *     const decoded = Buffer.from(headerValue.slice(4), 'base64').toString('utf8');
  *   }
- * 
+ *
  * @param value - The string value to encode
  * @returns ASCII-safe string (encoded if necessary)
- * 
+ *
  * @example
  * encodeHeaderValue("José")   // Returns "José" (é = 233, safe)
  * encodeHeaderValue("Marić")  // Returns "b64:TWFyacSH" (ć = 263, needs encoding)
@@ -59,17 +59,17 @@ export function encodeHeaderValue(value: string): string {
   if (!value || typeof value !== 'string') {
     return '';
   }
-  
+
   // Check if string contains extended Unicode characters (> 255)
   // Characters 0-255 (ASCII + Latin-1) are safe and don't need encoding
   // Characters > 255 (e.g., ć=263, đ=272, ł=322) need Base64 encoding
   // eslint-disable-next-line no-control-regex
   const hasExtendedUnicode = /[^\u0000-\u00FF]/.test(value);
-  
+
   if (!hasExtendedUnicode) {
     return value; // Safe to pass through
   }
-  
+
   // Encode to Base64 for extended Unicode characters
   const base64 = Buffer.from(value, 'utf8').toString('base64');
   return `b64:${base64}`;
@@ -84,12 +84,12 @@ export function encodeHeaderValue(value: string): string {
  */
 export function createSafeUser(
   user: IUser | null | undefined,
-): Partial<SafeUser> & { federatedTokens?: unknown } {
+): Partial<SafeUser> & { federatedTokens?: IUser['federatedTokens'] } {
   if (!user) {
     return {};
   }
 
-  const safeUser: Partial<SafeUser> & { federatedTokens?: unknown } = {};
+  const safeUser: Partial<SafeUser> & { federatedTokens?: IUser['federatedTokens'] } = {};
   for (const field of ALLOWED_USER_FIELDS) {
     if (field in user) {
       safeUser[field] = user[field];
@@ -118,7 +118,11 @@ const ALLOWED_BODY_FIELDS = ['conversationId', 'parentMessageId', 'messageId'] a
  * @param isHeader - Whether this value will be used in an HTTP header
  * @returns The processed string with placeholders replaced (and encoded if necessary)
  */
-function processUserPlaceholders(value: string, user?: IUser, isHeader: boolean = false): string {
+function processUserPlaceholders(
+  value: string,
+  user?: Partial<IUser>,
+  isHeader: boolean = false,
+): string {
   if (!user || typeof value !== 'string') {
     return value;
   }
@@ -205,12 +209,15 @@ function processSingleValue({
   user,
   body = undefined,
   isHeader = false,
+  dbSourced = false,
 }: {
   originalValue: string;
   customUserVars?: Record<string, string>;
-  user?: IUser;
+  user?: Partial<IUser>;
   body?: RequestBody;
   isHeader?: boolean;
+  /** When true, only resolve customUserVars — skip env vars, user/OpenID/body placeholders */
+  dbSourced?: boolean;
 }): string {
   // Type guard: ensure we're working with a string
   if (typeof originalValue !== 'string') {
@@ -219,13 +226,28 @@ function processSingleValue({
 
   let value = originalValue;
 
+  /**
+   * SECURITY INVARIANT — ordering matters:
+   * Resolve env vars on the admin-authored template BEFORE any user-controlled
+   * data is substituted (customUserVars, user fields, OIDC tokens, body placeholders).
+   * This prevents second-order injection where user values containing ${VAR}
+   * patterns would otherwise be expanded against process.env.
+   */
+  if (!dbSourced) {
+    value = extractEnvVariable(value);
+  }
+
+  /** Runs for both dbSourced and non-dbSourced — it is the only resolution DB-stored servers get */
   if (customUserVars) {
     for (const [varName, varVal] of Object.entries(customUserVars)) {
-      /** Escaped varName for use in regex to avoid issues with special characters */
       const escapedVarName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const placeholderRegex = new RegExp(`\\{\\{${escapedVarName}\\}\\}`, 'g');
       value = value.replace(placeholderRegex, varVal);
     }
+  }
+
+  if (dbSourced) {
+    return value;
   }
 
   value = processUserPlaceholders(value, user, isHeader);
@@ -238,8 +260,6 @@ function processSingleValue({
   if (body) {
     value = processBodyPlaceholders(value, body);
   }
-
-  value = extractEnvVariable(value);
 
   return value;
 }
@@ -254,16 +274,21 @@ function processSingleValue({
  * @returns - The processed object with environment variables replaced
  */
 export function processMCPEnv(params: {
-  options: Readonly<MCPOptions>;
-  user?: IUser;
+  options: Readonly<MCPOptions> & { dbId?: string };
+  user?: Partial<IUser>;
   customUserVars?: Record<string, string>;
   body?: RequestBody;
+  /** When true, only resolve customUserVars — skip env vars, user/OpenID/body placeholders (for DB-stored servers) */
+  dbSourced?: boolean;
 }): MCPOptions {
   const { options, user, customUserVars, body } = params;
 
   if (options === null || options === undefined) {
     return options;
   }
+
+  /** Derive dbSourced from explicit param OR from dbId on the options (failsafe for callers that forget the flag) */
+  const dbSourced = params.dbSourced ?? !!options.dbId;
 
   const newObj: MCPOptions = structuredClone(options);
 
@@ -302,7 +327,13 @@ export function processMCPEnv(params: {
   if ('env' in newObj && newObj.env) {
     const processedEnv: Record<string, string> = {};
     for (const [key, originalValue] of Object.entries(newObj.env)) {
-      processedEnv[key] = processSingleValue({ originalValue, customUserVars, user, body });
+      processedEnv[key] = processSingleValue({
+        user,
+        body,
+        dbSourced,
+        originalValue,
+        customUserVars,
+      });
     }
     newObj.env = processedEnv;
   }
@@ -310,7 +341,9 @@ export function processMCPEnv(params: {
   if ('args' in newObj && newObj.args) {
     const processedArgs: string[] = [];
     for (const originalValue of newObj.args) {
-      processedArgs.push(processSingleValue({ originalValue, customUserVars, user, body }));
+      processedArgs.push(
+        processSingleValue({ originalValue, customUserVars, user, body, dbSourced }),
+      );
     }
     newObj.args = processedArgs;
   }
@@ -321,10 +354,11 @@ export function processMCPEnv(params: {
     const processedHeaders: Record<string, string> = {};
     for (const [key, originalValue] of Object.entries(newObj.headers)) {
       processedHeaders[key] = processSingleValue({
-        originalValue,
-        customUserVars,
         user,
         body,
+        dbSourced,
+        originalValue,
+        customUserVars,
         isHeader: true, // Important: Enable header encoding
       });
     }
@@ -333,7 +367,13 @@ export function processMCPEnv(params: {
 
   // Process URL if it exists (for WebSocket, SSE, StreamableHTTP types)
   if ('url' in newObj && newObj.url) {
-    newObj.url = processSingleValue({ originalValue: newObj.url, customUserVars, user, body });
+    newObj.url = processSingleValue({
+      user,
+      body,
+      dbSourced,
+      customUserVars,
+      originalValue: newObj.url,
+    });
   }
 
   // Process OAuth configuration if it exists (for all transport types)
@@ -343,7 +383,13 @@ export function processMCPEnv(params: {
       // Only process string values for environment variables
       // token_exchange_method is an enum and shouldn't be processed
       if (typeof originalValue === 'string') {
-        processedOAuth[key] = processSingleValue({ originalValue, customUserVars, user, body });
+        processedOAuth[key] = processSingleValue({
+          user,
+          body,
+          dbSourced,
+          originalValue,
+          customUserVars,
+        });
       } else {
         processedOAuth[key] = originalValue;
       }

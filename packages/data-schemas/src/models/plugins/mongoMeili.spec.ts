@@ -73,7 +73,10 @@ describe('Meilisearch Mongoose plugin', () => {
       title: 'Test Conversation',
       endpoint: EModelEndpoint.openAI,
     });
-    expect(mockAddDocuments).toHaveBeenCalled();
+    expect(mockAddDocuments).toHaveBeenCalledWith(
+      [expect.objectContaining({ conversationId: expect.anything() })],
+      { primaryKey: 'conversationId' },
+    );
   });
 
   test('saving conversation indexes with expiredAt=null w/ meilisearch', async () => {
@@ -105,7 +108,10 @@ describe('Meilisearch Mongoose plugin', () => {
       user: new mongoose.Types.ObjectId(),
       isCreatedByUser: true,
     });
-    expect(mockAddDocuments).toHaveBeenCalled();
+    expect(mockAddDocuments).toHaveBeenCalledWith(
+      [expect.objectContaining({ messageId: expect.anything() })],
+      { primaryKey: 'messageId' },
+    );
   });
 
   test('saving messages with expiredAt=null indexes w/ meilisearch', async () => {
@@ -128,6 +134,87 @@ describe('Meilisearch Mongoose plugin', () => {
       expiredAt: new Date(),
     });
     expect(mockAddDocuments).not.toHaveBeenCalled();
+  });
+
+  test('updating an indexed conversation calls updateDocuments with primaryKey', async () => {
+    const conversationModel = createConversationModel(mongoose);
+    const convo = await conversationModel.create({
+      conversationId: new mongoose.Types.ObjectId().toString(),
+      user: new mongoose.Types.ObjectId(),
+      title: 'Original Title',
+      endpoint: EModelEndpoint.openAI,
+    });
+    mockUpdateDocuments.mockClear();
+
+    convo._meiliIndex = true;
+    convo.title = 'Updated Title';
+    await convo.save();
+
+    expect(mockUpdateDocuments).toHaveBeenCalledWith(
+      [expect.objectContaining({ conversationId: expect.anything() })],
+      { primaryKey: 'conversationId' },
+    );
+  });
+
+  test('updating an indexed message calls updateDocuments with primaryKey: messageId', async () => {
+    const messageModel = createMessageModel(mongoose);
+    const msg = await messageModel.create({
+      messageId: new mongoose.Types.ObjectId().toString(),
+      conversationId: new mongoose.Types.ObjectId(),
+      user: new mongoose.Types.ObjectId(),
+      isCreatedByUser: true,
+    });
+    mockUpdateDocuments.mockClear();
+
+    msg._meiliIndex = true;
+    msg.text = 'Updated text';
+    await msg.save();
+
+    expect(mockUpdateDocuments).toHaveBeenCalledWith(
+      [expect.objectContaining({ messageId: expect.anything() })],
+      { primaryKey: 'messageId' },
+    );
+  });
+
+  test('deleteObjectFromMeili calls deleteDocument with messageId, not _id', async () => {
+    const messageModel = createMessageModel(mongoose);
+    const msgId = new mongoose.Types.ObjectId().toString();
+    const msg = await messageModel.create({
+      messageId: msgId,
+      conversationId: new mongoose.Types.ObjectId(),
+      user: new mongoose.Types.ObjectId(),
+      isCreatedByUser: true,
+    });
+    mockDeleteDocument.mockClear();
+
+    const typedMsg = msg as unknown as import('./mongoMeili').DocumentWithMeiliIndex;
+    await new Promise<void>((resolve, reject) => {
+      typedMsg.deleteObjectFromMeili!((err) => (err ? reject(err) : resolve()));
+    });
+
+    expect(mockDeleteDocument).toHaveBeenCalledWith(msgId);
+    expect(mockDeleteDocument).not.toHaveBeenCalledWith(String(msg._id));
+  });
+
+  test('updateDocuments receives preprocessed data with primaryKey', async () => {
+    const conversationModel = createConversationModel(mongoose);
+    const conversationId = 'abc|def|ghi';
+    const convo = await conversationModel.create({
+      conversationId,
+      user: new mongoose.Types.ObjectId(),
+      title: 'Pipe Test',
+      endpoint: EModelEndpoint.openAI,
+    });
+    mockUpdateDocuments.mockClear();
+
+    convo._meiliIndex = true;
+    convo.title = 'Updated Pipe Test';
+    await convo.save();
+
+    expect(mockUpdateDocuments).toHaveBeenCalledWith(
+      [expect.objectContaining({ conversationId: 'abc--def--ghi' })],
+      { primaryKey: 'conversationId' },
+    );
   });
 
   test('sync w/ meili does not include TTL documents', async () => {
@@ -299,8 +386,10 @@ describe('Meilisearch Mongoose plugin', () => {
       // Run sync which should call processSyncBatch internally
       await conversationModel.syncWithMeili();
 
-      // Verify addDocumentsInBatches was called (new batch method)
-      expect(mockAddDocumentsInBatches).toHaveBeenCalled();
+      // Verify addDocumentsInBatches was called with explicit primaryKey
+      expect(mockAddDocumentsInBatches).toHaveBeenCalledWith(expect.any(Array), undefined, {
+        primaryKey: 'conversationId',
+      });
     });
 
     test('addObjectToMeili retries on failure', async () => {
@@ -1013,6 +1102,340 @@ describe('Meilisearch Mongoose plugin', () => {
         orphanedIds[1],
         orphanedIds[2],
       ]);
+    });
+  });
+
+  describe('processSyncBatch does not modify updatedAt timestamps', () => {
+    test('syncWithMeili preserves original updatedAt on conversations', async () => {
+      const conversationModel = createConversationModel(mongoose) as SchemaWithMeiliMethods;
+      await conversationModel.deleteMany({});
+      mockAddDocumentsInBatches.mockClear();
+
+      const pastDate = new Date('2024-01-15T12:00:00Z');
+
+      // Insert documents with specific updatedAt timestamps using raw collection
+      await conversationModel.collection.insertMany([
+        {
+          conversationId: new mongoose.Types.ObjectId().toString(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Old Conversation 1',
+          endpoint: EModelEndpoint.openAI,
+          _meiliIndex: false,
+          expiredAt: null,
+          createdAt: pastDate,
+          updatedAt: pastDate,
+        },
+        {
+          conversationId: new mongoose.Types.ObjectId().toString(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Old Conversation 2',
+          endpoint: EModelEndpoint.openAI,
+          _meiliIndex: false,
+          expiredAt: null,
+          createdAt: pastDate,
+          updatedAt: pastDate,
+        },
+      ]);
+
+      // Verify timestamps before sync
+      const beforeSync = await conversationModel.find({}).lean();
+      for (const doc of beforeSync) {
+        expect(new Date(doc.updatedAt as Date).getTime()).toBe(pastDate.getTime());
+      }
+
+      // Run sync which calls processSyncBatch internally
+      await conversationModel.syncWithMeili();
+
+      // Verify _meiliIndex was updated
+      const indexedCount = await conversationModel.countDocuments({ _meiliIndex: true });
+      expect(indexedCount).toBe(2);
+
+      // Verify updatedAt was NOT modified
+      const afterSync = await conversationModel.find({}).lean();
+      for (const doc of afterSync) {
+        expect(new Date(doc.updatedAt as Date).getTime()).toBe(pastDate.getTime());
+      }
+    });
+
+    test('syncWithMeili preserves original updatedAt on messages', async () => {
+      const messageModel = createMessageModel(mongoose) as SchemaWithMeiliMethods;
+      await messageModel.deleteMany({});
+      mockAddDocumentsInBatches.mockClear();
+
+      const pastDate = new Date('2023-06-01T08:30:00Z');
+
+      await messageModel.collection.insertMany([
+        {
+          messageId: new mongoose.Types.ObjectId().toString(),
+          conversationId: new mongoose.Types.ObjectId().toString(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          _meiliIndex: false,
+          expiredAt: null,
+          createdAt: pastDate,
+          updatedAt: pastDate,
+        },
+        {
+          messageId: new mongoose.Types.ObjectId().toString(),
+          conversationId: new mongoose.Types.ObjectId().toString(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: false,
+          _meiliIndex: false,
+          expiredAt: null,
+          createdAt: pastDate,
+          updatedAt: pastDate,
+        },
+      ]);
+
+      const beforeSync = await messageModel.find({}).lean();
+      for (const doc of beforeSync) {
+        expect(new Date(doc.updatedAt as Date).getTime()).toBe(pastDate.getTime());
+      }
+
+      await messageModel.syncWithMeili();
+
+      const indexedCount = await messageModel.countDocuments({ _meiliIndex: true });
+      expect(indexedCount).toBe(2);
+
+      const afterSync = await messageModel.find({}).lean();
+      for (const doc of afterSync) {
+        expect(new Date(doc.updatedAt as Date).getTime()).toBe(pastDate.getTime());
+      }
+    });
+  });
+
+  describe('Missing _meiliIndex property handling in sync process', () => {
+    test('syncWithMeili includes documents with missing _meiliIndex', async () => {
+      const conversationModel = createConversationModel(mongoose) as SchemaWithMeiliMethods;
+      await conversationModel.deleteMany({});
+      mockAddDocumentsInBatches.mockClear();
+
+      // Insert documents with different _meiliIndex states
+      await conversationModel.collection.insertMany([
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Missing _meiliIndex',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          // _meiliIndex is not set (missing/undefined)
+        },
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Explicit false',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          _meiliIndex: false,
+        },
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Already indexed',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          _meiliIndex: true,
+        },
+      ]);
+
+      // Run sync
+      await conversationModel.syncWithMeili();
+
+      // Should have processed 2 documents (missing and false, but not true)
+      expect(mockAddDocumentsInBatches).toHaveBeenCalled();
+
+      // Check that both documents without _meiliIndex=true are now indexed
+      const indexedCount = await conversationModel.countDocuments({
+        expiredAt: null,
+        _meiliIndex: true,
+      });
+      expect(indexedCount).toBe(3); // All 3 should now be indexed
+
+      // Verify documents with missing _meiliIndex were updated
+      const docsWithMissingIndex = await conversationModel.countDocuments({
+        expiredAt: null,
+        title: 'Missing _meiliIndex',
+        _meiliIndex: true,
+      });
+      expect(docsWithMissingIndex).toBe(1);
+    });
+
+    test('getSyncProgress counts documents with missing _meiliIndex as not indexed', async () => {
+      const messageModel = createMessageModel(mongoose) as SchemaWithMeiliMethods;
+      await messageModel.deleteMany({});
+
+      // Insert documents with different _meiliIndex states
+      await messageModel.collection.insertMany([
+        {
+          messageId: new mongoose.Types.ObjectId(),
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          expiredAt: null,
+          _meiliIndex: true,
+        },
+        {
+          messageId: new mongoose.Types.ObjectId(),
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          expiredAt: null,
+          _meiliIndex: false,
+        },
+        {
+          messageId: new mongoose.Types.ObjectId(),
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          expiredAt: null,
+          // _meiliIndex is missing
+        },
+      ]);
+
+      const progress = await messageModel.getSyncProgress();
+
+      // Total should be 3
+      expect(progress.totalDocuments).toBe(3);
+      // Only 1 is indexed (with _meiliIndex: true)
+      expect(progress.totalProcessed).toBe(1);
+      // Not complete since 2 documents are not indexed
+      expect(progress.isComplete).toBe(false);
+    });
+
+    test('query with _meiliIndex: { $ne: true } includes missing values', async () => {
+      const conversationModel = createConversationModel(mongoose) as SchemaWithMeiliMethods;
+      await conversationModel.deleteMany({});
+
+      // Insert documents with different _meiliIndex states
+      await conversationModel.collection.insertMany([
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Missing',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          // _meiliIndex is missing
+        },
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'False',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          _meiliIndex: false,
+        },
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'True',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          _meiliIndex: true,
+        },
+      ]);
+
+      // Query for documents where _meiliIndex is not true (used in syncWithMeili)
+      const unindexedDocs = await conversationModel.find({
+        expiredAt: null,
+        _meiliIndex: { $ne: true },
+      });
+
+      // Should find 2 documents (missing and false, but not true)
+      expect(unindexedDocs.length).toBe(2);
+      const titles = unindexedDocs.map((doc) => doc.title).sort();
+      expect(titles).toEqual(['False', 'Missing']);
+    });
+
+    test('syncWithMeili processes all documents where _meiliIndex is not true', async () => {
+      const messageModel = createMessageModel(mongoose) as SchemaWithMeiliMethods;
+      await messageModel.deleteMany({});
+      mockAddDocumentsInBatches.mockClear();
+
+      // Create a mix of documents with missing and false _meiliIndex
+      await messageModel.collection.insertMany([
+        {
+          messageId: new mongoose.Types.ObjectId(),
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          expiredAt: null,
+          // _meiliIndex missing
+        },
+        {
+          messageId: new mongoose.Types.ObjectId(),
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          expiredAt: null,
+          _meiliIndex: false,
+        },
+        {
+          messageId: new mongoose.Types.ObjectId(),
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          isCreatedByUser: true,
+          expiredAt: null,
+          // _meiliIndex missing
+        },
+      ]);
+
+      // Count documents that should be synced (where _meiliIndex: { $ne: true })
+      const toSyncCount = await messageModel.countDocuments({
+        expiredAt: null,
+        _meiliIndex: { $ne: true },
+      });
+      expect(toSyncCount).toBe(3); // All 3 should be synced
+
+      await messageModel.syncWithMeili();
+
+      // All should now be indexed
+      const indexedCount = await messageModel.countDocuments({
+        expiredAt: null,
+        _meiliIndex: true,
+      });
+      expect(indexedCount).toBe(3);
+    });
+
+    test('syncWithMeili treats missing _meiliIndex same as false', async () => {
+      const conversationModel = createConversationModel(mongoose) as SchemaWithMeiliMethods;
+      await conversationModel.deleteMany({});
+      mockAddDocumentsInBatches.mockClear();
+
+      // Insert one document with missing _meiliIndex and one with false
+      await conversationModel.collection.insertMany([
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'Missing',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          // _meiliIndex is missing
+        },
+        {
+          conversationId: new mongoose.Types.ObjectId(),
+          user: new mongoose.Types.ObjectId(),
+          title: 'False',
+          endpoint: EModelEndpoint.openAI,
+          expiredAt: null,
+          _meiliIndex: false,
+        },
+      ]);
+
+      // Both should be picked up by the sync query
+      const toSync = await conversationModel.find({
+        expiredAt: null,
+        _meiliIndex: { $ne: true },
+      });
+      expect(toSync.length).toBe(2);
+
+      await conversationModel.syncWithMeili();
+
+      // Both should be indexed after sync
+      const afterSync = await conversationModel.find({
+        expiredAt: null,
+        _meiliIndex: true,
+      });
+      expect(afterSync.length).toBe(2);
     });
   });
 });

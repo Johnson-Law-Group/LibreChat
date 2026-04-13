@@ -3,6 +3,9 @@ import type { Agents } from 'librechat-data-provider';
 import type { Redis, Cluster } from 'ioredis';
 import { StandardGraph } from '@librechat/agents';
 
+/** Suppress winston Console transport output (survives jest.resetModules) */
+jest.spyOn(console, 'log').mockImplementation();
+
 /**
  * Integration tests for RedisJobStore.
  *
@@ -24,8 +27,11 @@ describe('RedisJobStore Integration Tests', () => {
 
     // Set up test environment
     process.env.USE_REDIS = process.env.USE_REDIS ?? 'true';
+    process.env.USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER ?? 'false';
     process.env.REDIS_URI = process.env.REDIS_URI ?? 'redis://127.0.0.1:6379';
     process.env.REDIS_KEY_PREFIX = testPrefix;
+    process.env.REDIS_PING_INTERVAL = '0';
+    process.env.REDIS_RETRY_MAX_ATTEMPTS = '5';
 
     jest.resetModules();
 
@@ -880,6 +886,316 @@ describe('RedisJobStore Integration Tests', () => {
     });
   });
 
+  describe('User Job Tracking TTL', () => {
+    test('should set TTL on user jobs set after createJob', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const userId = `ttl-user-${Date.now()}`;
+      const streamId = `ttl-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+      const ttl = await ioredisClient.ttl(userKey);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(86400);
+
+      await store.destroy();
+    });
+
+    test('should respect custom userJobsSetTtl option', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { userJobsSetTtl: 3600 });
+      await store.initialize();
+
+      const userId = `custom-ttl-user-${Date.now()}`;
+      const streamId = `custom-ttl-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+      const ttl = await ioredisClient.ttl(userKey);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(3600);
+
+      await store.destroy();
+    });
+
+    test('should not set TTL when userJobsSetTtl is 0', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { userJobsSetTtl: 0 });
+      await store.initialize();
+
+      const userId = `no-ttl-user-${Date.now()}`;
+      const streamId = `no-ttl-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+      // -1 means key exists but has no TTL
+      const ttl = await ioredisClient.ttl(userKey);
+      expect(ttl).toBe(-1);
+
+      // Verify the set itself still exists and contains the streamId
+      const members = await ioredisClient.smembers(userKey);
+      expect(members).toContain(streamId);
+
+      await store.destroy();
+    });
+
+    test('should refresh TTL when a second createJob is issued for the same user', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { userJobsSetTtl: 120 });
+      await store.initialize();
+
+      const userId = `refresh-ttl-user-${Date.now()}`;
+      const streamId1 = `refresh-stream-1-${Date.now()}`;
+      const streamId2 = `refresh-stream-2-${Date.now()}`;
+
+      await store.createJob(streamId1, userId, streamId1);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+
+      // Manually reduce TTL to simulate time passing
+      await ioredisClient.expire(userKey, 30);
+      const reducedTtl = await ioredisClient.ttl(userKey);
+      expect(reducedTtl).toBeLessThanOrEqual(30);
+
+      // Second createJob should refresh the TTL
+      await store.createJob(streamId2, userId, streamId2);
+
+      const refreshedTtl = await ioredisClient.ttl(userKey);
+      expect(refreshedTtl).toBeGreaterThan(30);
+      expect(refreshedTtl).toBeLessThanOrEqual(120);
+
+      await store.destroy();
+    });
+
+    test('should proactively SREM from user jobs set on updateJob to terminal status', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const userId = `proactive-srem-user-${Date.now()}`;
+      const streamId = `proactive-srem-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+
+      // Verify the entry exists before update
+      let members = await ioredisClient.smembers(userKey);
+      expect(members).toContain(streamId);
+
+      await store.updateJob(streamId, { status: 'complete', completedAt: Date.now() });
+
+      // Directly check the Redis set — without calling getActiveJobIdsByUser (which self-heals)
+      members = await ioredisClient.smembers(userKey);
+      expect(members).not.toContain(streamId);
+
+      await store.destroy();
+    });
+
+    test('should proactively SREM from user jobs set on updateJob to aborted', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const userId = `srem-aborted-user-${Date.now()}`;
+      const streamId = `srem-aborted-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+      let members = await ioredisClient.smembers(userKey);
+      expect(members).toContain(streamId);
+
+      await store.updateJob(streamId, { status: 'aborted', completedAt: Date.now() });
+
+      members = await ioredisClient.smembers(userKey);
+      expect(members).not.toContain(streamId);
+
+      await store.destroy();
+    });
+
+    test('should proactively SREM from user jobs set on updateJob to error', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const userId = `srem-error-user-${Date.now()}`;
+      const streamId = `srem-error-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+      let members = await ioredisClient.smembers(userKey);
+      expect(members).toContain(streamId);
+
+      await store.updateJob(streamId, {
+        status: 'error',
+        error: 'Test error',
+        completedAt: Date.now(),
+      });
+
+      members = await ioredisClient.smembers(userKey);
+      expect(members).not.toContain(streamId);
+
+      await store.destroy();
+    });
+
+    test('should proactively SREM from user jobs set on deleteJob', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const userId = `delete-srem-user-${Date.now()}`;
+      const streamId = `delete-srem-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId);
+
+      const userKey = `stream:user:{${userId}}:jobs`;
+
+      // Verify entry exists
+      let members = await ioredisClient.smembers(userKey);
+      expect(members).toContain(streamId);
+
+      await store.deleteJob(streamId);
+
+      // Directly check the Redis set
+      members = await ioredisClient.smembers(userKey);
+      expect(members).not.toContain(streamId);
+
+      await store.destroy();
+    });
+
+    test('should set TTL on tenant-qualified user jobs set', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const userId = `tenant-user-${Date.now()}`;
+      const tenantId = `tenant-${Date.now()}`;
+      const streamId = `tenant-stream-${Date.now()}`;
+
+      await store.createJob(streamId, userId, streamId, tenantId);
+
+      const userKey = `stream:user:{${tenantId}:${userId}}:jobs`;
+      const members = await ioredisClient.smembers(userKey);
+      expect(members).toContain(streamId);
+
+      const ttl = await ioredisClient.ttl(userKey);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(86400);
+
+      // Non-tenant key should NOT contain this entry
+      const wrongKey = `stream:user:{${userId}}:jobs`;
+      const wrongMembers = await ioredisClient.smembers(wrongKey);
+      expect(wrongMembers).not.toContain(streamId);
+
+      await store.destroy();
+    });
+  });
+
+  describe('Race Condition: updateJob after deleteJob', () => {
+    test('should not re-create job hash when updateJob runs after deleteJob', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `race-condition-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+
+      const jobKey = `stream:{${streamId}}:job`;
+      const ttlBefore = await ioredisClient.ttl(jobKey);
+      expect(ttlBefore).toBeGreaterThan(0);
+
+      await store.deleteJob(streamId);
+
+      const afterDelete = await ioredisClient.exists(jobKey);
+      expect(afterDelete).toBe(0);
+
+      await store.updateJob(streamId, { finalEvent: JSON.stringify({ final: true }) });
+
+      const afterUpdate = await ioredisClient.exists(jobKey);
+      expect(afterUpdate).toBe(0);
+
+      await store.destroy();
+    });
+
+    test('should not leave orphan keys from concurrent emitDone and deleteJob', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `concurrent-race-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+
+      const jobKey = `stream:{${streamId}}:job`;
+
+      await Promise.all([
+        store.updateJob(streamId, { finalEvent: JSON.stringify({ final: true }) }),
+        store.deleteJob(streamId),
+      ]);
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const exists = await ioredisClient.exists(jobKey);
+      const ttl = exists ? await ioredisClient.ttl(jobKey) : -2;
+
+      expect(ttl === -2 || ttl > 0).toBe(true);
+      expect(ttl).not.toBe(-1);
+
+      await store.destroy();
+    });
+  });
+
   describe('Local Graph Cache Optimization', () => {
     test('should use local cache when available', async () => {
       if (!ioredisClient) {
@@ -970,6 +1286,198 @@ describe('RedisJobStore Integration Tests', () => {
 
       await instance1.destroy();
       await instance2.destroy();
+    });
+  });
+
+  describe('Batched Cleanup', () => {
+    test('should clean up many stale jobs in parallel batches', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      // Very short TTL so jobs are immediately stale
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 1 });
+      await store.initialize();
+
+      const jobCount = 75; // More than one batch of 50
+      const veryOldTimestamp = Date.now() - 10000; // 10 seconds ago
+
+      // Create many stale jobs directly in Redis
+      for (let i = 0; i < jobCount; i++) {
+        const streamId = `batch-cleanup-${Date.now()}-${i}`;
+        const jobKey = `stream:{${streamId}}:job`;
+        await ioredisClient.hmset(jobKey, {
+          streamId,
+          userId: 'batch-user',
+          status: 'running',
+          createdAt: veryOldTimestamp.toString(),
+          syncSent: '0',
+        });
+        await ioredisClient.sadd('stream:running', streamId);
+      }
+
+      // Verify jobs are in the running set
+      const runningBefore = await ioredisClient.scard('stream:running');
+      expect(runningBefore).toBeGreaterThanOrEqual(jobCount);
+
+      // Run cleanup - should process in batches of 50
+      const cleaned = await store.cleanup();
+      expect(cleaned).toBeGreaterThanOrEqual(jobCount);
+
+      await store.destroy();
+    });
+
+    test('should not clean up valid running jobs during batch cleanup', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 1200 });
+      await store.initialize();
+
+      // Create a mix of valid and stale jobs
+      const validStreamId = `valid-job-${Date.now()}`;
+      await store.createJob(validStreamId, 'user-1', validStreamId);
+
+      const staleStreamId = `stale-job-${Date.now()}`;
+      const jobKey = `stream:{${staleStreamId}}:job`;
+      await ioredisClient.hmset(jobKey, {
+        streamId: staleStreamId,
+        userId: 'user-1',
+        status: 'running',
+        createdAt: (Date.now() - 2000000).toString(), // Very old
+        syncSent: '0',
+      });
+      await ioredisClient.sadd('stream:running', staleStreamId);
+
+      const cleaned = await store.cleanup();
+      expect(cleaned).toBeGreaterThanOrEqual(1);
+
+      // Valid job should still exist
+      const validJob = await store.getJob(validStreamId);
+      expect(validJob).not.toBeNull();
+      expect(validJob?.status).toBe('running');
+
+      await store.destroy();
+    });
+  });
+
+  describe('appendChunk TTL Refresh', () => {
+    test('should set TTL on the chunk stream', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 120 });
+      await store.initialize();
+
+      const streamId = `append-ttl-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+
+      await store.appendChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', type: 'text', text: 'first' },
+      });
+
+      const chunkKey = `stream:{${streamId}}:chunks`;
+      const ttl = await ioredisClient.ttl(chunkKey);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(120);
+
+      await store.destroy();
+    });
+
+    test('should refresh TTL on subsequent chunks (not just first)', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient, { runningTtl: 120 });
+      await store.initialize();
+
+      const streamId = `append-refresh-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+
+      // Append first chunk
+      await store.appendChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', type: 'text', text: 'first' },
+      });
+
+      const chunkKey = `stream:{${streamId}}:chunks`;
+      const ttl1 = await ioredisClient.ttl(chunkKey);
+      expect(ttl1).toBeGreaterThan(0);
+
+      // Manually reduce TTL to simulate time passing
+      await ioredisClient.expire(chunkKey, 30);
+      const reducedTtl = await ioredisClient.ttl(chunkKey);
+      expect(reducedTtl).toBeLessThanOrEqual(30);
+
+      // Append another chunk - TTL should be refreshed back to running TTL
+      await store.appendChunk(streamId, {
+        event: 'on_message_delta',
+        data: { id: 'step-1', type: 'text', text: 'second' },
+      });
+
+      const ttl2 = await ioredisClient.ttl(chunkKey);
+      // Should be refreshed to ~120, not still ~30
+      expect(ttl2).toBeGreaterThan(30);
+      expect(ttl2).toBeLessThanOrEqual(120);
+
+      await store.destroy();
+    });
+
+    test('should store chunks correctly via pipeline', async () => {
+      if (!ioredisClient) {
+        return;
+      }
+
+      const { RedisJobStore } = await import('../implementations/RedisJobStore');
+      const store = new RedisJobStore(ioredisClient);
+      await store.initialize();
+
+      const streamId = `append-pipeline-${Date.now()}`;
+      await store.createJob(streamId, 'user-1', streamId);
+
+      const chunks = [
+        {
+          event: 'on_run_step',
+          data: {
+            id: 'step-1',
+            runId: 'run-1',
+            index: 0,
+            stepDetails: { type: 'message_creation' },
+          },
+        },
+        {
+          event: 'on_message_delta',
+          data: { id: 'step-1', delta: { content: { type: 'text', text: 'Hello ' } } },
+        },
+        {
+          event: 'on_message_delta',
+          data: { id: 'step-1', delta: { content: { type: 'text', text: 'world!' } } },
+        },
+      ];
+
+      for (const chunk of chunks) {
+        await store.appendChunk(streamId, chunk);
+      }
+
+      // Verify all chunks were stored
+      const chunkKey = `stream:{${streamId}}:chunks`;
+      const len = await ioredisClient.xlen(chunkKey);
+      expect(len).toBe(3);
+
+      // Verify content can be reconstructed
+      const content = await store.getContentParts(streamId);
+      expect(content).not.toBeNull();
+      expect(content!.content.length).toBeGreaterThan(0);
+
+      await store.destroy();
     });
   });
 });

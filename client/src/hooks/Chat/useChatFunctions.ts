@@ -13,6 +13,7 @@ import {
   parseCompactConvo,
   replaceSpecialVars,
   isAssistantsEndpoint,
+  getDefaultParamsEndpoint,
 } from 'librechat-data-provider';
 import type {
   TMessage,
@@ -29,6 +30,7 @@ import useSetFilesToDelete from '~/hooks/Files/useSetFilesToDelete';
 import useGetSender from '~/hooks/Conversations/useGetSender';
 import { logger, createDualMessageContent } from '~/utils';
 import store, { useGetEphemeralAgent } from '~/store';
+import { startupConfigKey } from '~/data-provider';
 import useUserKey from '~/hooks/Input/useUserKey';
 import { useAuthContext } from '~/hooks';
 
@@ -96,6 +98,8 @@ export default function useChatFunctions({
   ) => {
     setShowStopButton(false);
     resetLatestMultiMessage();
+
+    text = text.trim();
     if (!!isSubmitting || text === '') {
       return;
     }
@@ -133,7 +137,6 @@ export default function useChatFunctions({
 
     // construct the query message
     // this is not a real messageId, it is used as placeholder before real messageId returned
-    text = text.trim();
     const intermediateId = overrideUserMessageId ?? v4();
     parentMessageId = parentMessageId ?? latestMessage?.messageId ?? Constants.NO_PARENT;
 
@@ -170,15 +173,17 @@ export default function useChatFunctions({
     }
 
     const endpointsConfig = queryClient.getQueryData<TEndpointsConfig>([QueryKeys.endpoints]);
-    const startupConfig = queryClient.getQueryData<TStartupConfig>([QueryKeys.startupConfig]);
+    const startupConfig = queryClient.getQueryData<TStartupConfig>(startupConfigKey(true));
     const endpointType = getEndpointField(endpointsConfig, endpoint, 'type');
     const iconURL = conversation?.iconURL;
+    const defaultParamsEndpoint = getDefaultParamsEndpoint(endpointsConfig, endpoint);
 
     /** This becomes part of the `endpointOption` */
     const convo = parseCompactConvo({
       endpoint: endpoint as EndpointSchemaKey,
       endpointType: endpointType as EndpointSchemaKey,
       conversation: conversation ?? {},
+      defaultParamsEndpoint,
     });
 
     const { modelDisplayLabel } = endpointsConfig?.[endpoint ?? ''] ?? {};
