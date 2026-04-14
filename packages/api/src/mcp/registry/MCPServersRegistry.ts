@@ -12,7 +12,7 @@ import { MCPInspectionFailedError, isMCPDomainNotAllowedError } from '~/mcp/erro
 import { MCPServerInspector } from './MCPServerInspector';
 import { ServerConfigsDB } from './db/ServerConfigsDB';
 import { cacheConfig } from '~/cache/cacheConfig';
-import { withTimeout } from '~/utils';
+import { processMCPEnv, withTimeout } from '~/utils';
 
 /** How long a failure stub is considered fresh before re-attempting inspection (5 minutes). */
 const CONFIG_STUB_RETRY_MS = 5 * 60 * 1000;
@@ -233,9 +233,10 @@ export class MCPServersRegistry {
     const configRepo = this.getConfigRepository(storageLocation);
     let parsedConfig: t.ParsedServerConfig;
     try {
+      const resolvedConfig = processMCPEnv({ options: config, dbSourced: storageLocation === 'DB' });
       parsedConfig = await MCPServerInspector.inspect(
         serverName,
-        config,
+        resolvedConfig,
         undefined,
         this.allowedDomains,
       );
@@ -276,9 +277,10 @@ export class MCPServersRegistry {
     const { inspectionFailed: _, ...configForInspection } = existing;
     let parsedConfig: t.ParsedServerConfig;
     try {
+      const resolvedConfig = processMCPEnv({ options: configForInspection, dbSourced: existing.source === 'user' });
       parsedConfig = await MCPServerInspector.inspect(
         serverName,
-        configForInspection,
+        resolvedConfig,
         undefined,
         this.allowedDomains,
       );
@@ -434,8 +436,9 @@ export class MCPServersRegistry {
     logger.info(`${prefix} Lazy-initializing config-source server`);
 
     try {
+      const resolvedConfig = processMCPEnv({ options: rawConfig });
       const inspected = await withTimeout(
-        MCPServerInspector.inspect(serverName, rawConfig, undefined, this.allowedDomains),
+        MCPServerInspector.inspect(serverName, resolvedConfig, undefined, this.allowedDomains),
         CONFIG_SERVER_INIT_TIMEOUT_MS,
         `${prefix} Server initialization timed out`,
       );
