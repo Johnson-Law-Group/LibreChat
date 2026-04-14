@@ -12,6 +12,7 @@ export type JobStatus = 'running' | 'complete' | 'error' | 'aborted';
 export interface SerializableJobData {
   streamId: string;
   userId: string;
+  tenantId?: string;
   status: JobStatus;
   createdAt: number;
   completedAt?: number;
@@ -65,12 +66,18 @@ export interface SerializableJobData {
  * ```
  */
 export interface UsageMetadata {
+  /** Logical usage bucket for accounting/reporting. Defaults to model response usage. */
+  usage_type?: 'message' | 'summarization';
   /** Total input tokens (prompt tokens) */
   input_tokens?: number;
   /** Total output tokens (completion tokens) */
   output_tokens?: number;
+  /** Total billed tokens when provided by the model/runtime */
+  total_tokens?: number;
   /** Model identifier that generated this usage */
   model?: string;
+  /** Provider identifier that generated this usage */
+  provider?: string;
   /**
    * OpenAI-style cache token details.
    * Present for OpenAI models (GPT-4, o1, etc.)
@@ -143,6 +150,7 @@ export interface IJobStore {
     streamId: string,
     userId: string,
     conversationId?: string,
+    tenantId?: string,
   ): Promise<SerializableJobData>;
 
   /** Get a job by streamId (streamId === conversationId) */
@@ -180,7 +188,7 @@ export interface IJobStore {
    * @param userId - The user ID to query
    * @returns Array of conversation IDs with active jobs
    */
-  getActiveJobIdsByUser(userId: string): Promise<string[]>;
+  getActiveJobIdsByUser(userId: string, tenantId?: string): Promise<string[]>;
 
   // ===== Content State Methods =====
   // These methods manage volatile content state tied to each job.
@@ -286,7 +294,7 @@ export interface IJobStore {
  * Implementations can use EventEmitter, Redis Pub/Sub, etc.
  */
 export interface IEventTransport {
-  /** Subscribe to events for a stream */
+  /** Subscribe to events for a stream. `ready` resolves once the transport can receive messages. */
   subscribe(
     streamId: string,
     handlers: {
@@ -294,16 +302,16 @@ export interface IEventTransport {
       onDone?: (event: unknown) => void;
       onError?: (error: string) => void;
     },
-  ): { unsubscribe: () => void };
+  ): { unsubscribe: () => void; ready?: Promise<void> };
 
-  /** Publish a chunk event */
-  emitChunk(streamId: string, event: unknown): void;
+  /** Publish a chunk event - returns Promise in Redis mode for ordered delivery */
+  emitChunk(streamId: string, event: unknown): void | Promise<void>;
 
-  /** Publish a done event */
-  emitDone(streamId: string, event: unknown): void;
+  /** Publish a done event - returns Promise in Redis mode for ordered delivery */
+  emitDone(streamId: string, event: unknown): void | Promise<void>;
 
-  /** Publish an error event */
-  emitError(streamId: string, error: string): void;
+  /** Publish an error event - returns Promise in Redis mode for ordered delivery */
+  emitError(streamId: string, error: string): void | Promise<void>;
 
   /**
    * Publish an abort signal to all replicas (Redis mode).
@@ -328,6 +336,15 @@ export interface IEventTransport {
 
   /** Listen for all subscribers leaving */
   onAllSubscribersLeft(streamId: string, callback: () => void): void;
+
+  /**
+   * Advance subscriber reorder buffer to match publisher sequence (cross-replica safe).
+   * @param earlyReplayCount - Number of events replayed from earlyEventBuffer (same-replica).
+   *   Pending entries with seq < earlyReplayCount are duplicates and are pruned; entries at or
+   *   above are live chunks that arrived during the async GET window and are preserved.
+   *   When 0/undefined (cross-replica), all pending entries are treated as live.
+   */
+  syncReorderBuffer?(streamId: string, earlyReplayCount?: number): void | Promise<void>;
 
   /** Cleanup transport resources for a specific stream */
   cleanup(streamId: string): void;

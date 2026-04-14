@@ -1,5 +1,4 @@
 import { memo, useMemo } from 'react';
-import type { IconMapProps } from '~/common';
 import { URLIcon } from '~/components/Endpoints/URLIcon';
 import { icons } from '~/hooks/Endpoint/Icons';
 

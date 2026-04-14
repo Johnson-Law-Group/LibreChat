@@ -8,6 +8,9 @@
 
 import type { UsageMetadata } from '../interfaces/IJobStore';
 
+/** Suppress winston Console transport output (survives jest.resetModules) */
+jest.spyOn(console, 'log').mockImplementation();
+
 describe('CollectedUsage - InMemoryJobStore', () => {
   beforeEach(() => {
     jest.resetModules();
@@ -146,7 +149,7 @@ describe('CollectedUsage - GenerationJobManager', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `manager-test-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -179,7 +182,7 @@ describe('CollectedUsage - GenerationJobManager', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `no-usage-test-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -202,7 +205,7 @@ describe('CollectedUsage - GenerationJobManager', () => {
       isRedis: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const collectedUsage: UsageMetadata[] = [
       { input_tokens: 100, output_tokens: 50, model: 'gpt-4' },
@@ -235,7 +238,7 @@ describe('AbortJob - Text and CollectedUsage', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `text-extract-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -267,7 +270,7 @@ describe('AbortJob - Text and CollectedUsage', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `empty-text-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -291,7 +294,7 @@ describe('AbortJob - Text and CollectedUsage', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `full-abort-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -328,7 +331,7 @@ describe('AbortJob - Text and CollectedUsage', () => {
       isRedis: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const abortResult = await GenerationJobManager.abortJob('non-existent-job');
 
@@ -365,7 +368,7 @@ describe('Real-world Scenarios', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `parallel-abort-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -419,7 +422,7 @@ describe('Real-world Scenarios', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `cache-abort-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');
@@ -459,7 +462,7 @@ describe('Real-world Scenarios', () => {
       cleanupOnComplete: false,
     });
 
-    await GenerationJobManager.initialize();
+    GenerationJobManager.initialize();
 
     const streamId = `sequential-abort-${Date.now()}`;
     await GenerationJobManager.createJob(streamId, 'user-1');

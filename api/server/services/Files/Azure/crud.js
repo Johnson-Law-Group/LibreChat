@@ -3,7 +3,7 @@ const path = require('path');
 const mime = require('mime');
 const fetch = require('node-fetch');
 const { logger } = require('@librechat/data-schemas');
-const { getAzureContainerClient } = require('@librechat/api');
+const { getAzureContainerClient, deleteRagFile } = require('@librechat/api');
 
 const defaultBasePath = 'images';
 const { AZURE_STORAGE_PUBLIC_ACCESS = 'true', AZURE_CONTAINER_NAME = 'files' } = process.env;
@@ -249,6 +249,8 @@ async function getAzureURL({ fileName, basePath = defaultBasePath, userId, conta
  * @param {MongoFile} params.file - The file object.
  */
 async function deleteFileFromAzure(req, file) {
+  await deleteRagFile({ userId: req.user.id, file });
+
   try {
     const containerClient = await getAzureContainerClient(AZURE_CONTAINER_NAME);
     const blobPath = file.filepath.split(`${AZURE_CONTAINER_NAME}/`)[1];
@@ -380,7 +382,7 @@ async function getAzureFileStream(_req, filepath) {
   try {
     const containerClient = await getAzureContainerClient(AZURE_CONTAINER_NAME);
     let blobPath;
-    
+
     // Handle various path formats
     if (filepath.startsWith('http')) {
       // Full Azure blob URL
@@ -394,14 +396,14 @@ async function getAzureFileStream(_req, filepath) {
     } else {
       throw new Error(`Invalid file path format: ${filepath}`);
     }
-    
+
     if (!blobPath) {
       throw new Error(`Could not extract blob path from: ${filepath}`);
     }
-    
+
     const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
     const downloadResponse = await blockBlobClient.download();
-    
+
     return downloadResponse.readableStreamBody;
   } catch (error) {
     logger.error('[getAzureFileStream] Error getting blob stream:', error);
