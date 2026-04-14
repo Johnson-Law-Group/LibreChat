@@ -15,32 +15,32 @@ const router = express.Router();
 router.use(async (req, res, next) => {
   try {
     const fileSource = process.env.CDN_PROVIDER || FileSources.local;
-    
+
     // Only handle Azure files here
     if (fileSource !== FileSources.azure_blob) {
       return next();
     }
-    
+
     // For Azure, stream the file from Azure Blob Storage
     const { getDownloadStream } = getStrategyFunctions(FileSources.azure_blob);
     if (!getDownloadStream) {
       return next();
     }
-    
+
     // Request path is like /695e9d8ef2a9cf7cd05dc486/filename.png
     // We need to prepend 'images/' to match Azure blob path
     const filepath = `images${req.path}`;
-    
+
     try {
       const stream = await getDownloadStream(req, filepath);
-      
+
       // Detect content type from filename
       const contentType = mime.getType(req.path) || 'application/octet-stream';
-      
+
       // Set appropriate headers
       res.setHeader('Content-Type', contentType);
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      
+
       // Pipe the stream to response
       stream.pipe(res);
     } catch (error) {
