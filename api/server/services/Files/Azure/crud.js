@@ -382,7 +382,7 @@ async function getAzureFileStream(_req, filepath) {
   try {
     const containerClient = await getAzureContainerClient(AZURE_CONTAINER_NAME);
     let blobPath;
-    
+
     // Handle various path formats
     if (filepath.startsWith('http')) {
       // Full Azure blob URL
@@ -396,14 +396,14 @@ async function getAzureFileStream(_req, filepath) {
     } else {
       throw new Error(`Invalid file path format: ${filepath}`);
     }
-    
+
     if (!blobPath) {
       throw new Error(`Could not extract blob path from: ${filepath}`);
     }
-    
+
     const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
     const downloadResponse = await blockBlobClient.download();
-    
+
     return downloadResponse.readableStreamBody;
   } catch (error) {
     logger.error('[getAzureFileStream] Error getting blob stream:', error);

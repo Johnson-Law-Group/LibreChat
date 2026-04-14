@@ -63,7 +63,7 @@ const getUserController = async (req, res) => {
       const newUrl = await getNewAzureURL(userData.avatar);
       if (newUrl) {
         userData.avatar = newUrl;
-        await updateUser(userData.id, { avatar: userData.avatar });
+        await db.updateUser(userData.id, { avatar: userData.avatar });
       }
     } catch (error) {
       userData.avatar = originalAvatar;
