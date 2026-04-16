@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
 import { getEndpointField } from 'librechat-data-provider';
 import type * as t from 'librechat-data-provider';
-import { getIconKey, getEntity, getIconEndpoint } from '~/utils';
+import { getIconKey, getEntity, getIconEndpoint, getModelSpec } from '~/utils';
 import ConvoIconURL from '~/components/Endpoints/ConvoIconURL';
+import { useGetStartupConfig } from '~/data-provider';
 import { icons } from '~/hooks/Endpoint/Icons';
 
 export default function ConvoIcon({
@@ -40,7 +41,9 @@ export default function ConvoIcon({
     [endpoint, conversation?.agent_id, conversation?.assistant_id, agentsMap, assistantMap],
   );
 
-  const name = entity?.name ?? '';
+  const { data: startupConfig } = useGetStartupConfig();
+  const specLabel = getModelSpec({ specName: conversation?.spec, startupConfig })?.label;
+  const name = specLabel ?? entity?.name ?? '';
   const avatar = isAgent
     ? (entity as t.Agent | undefined)?.avatar?.filepath
     : ((entity as t.Assistant | undefined)?.metadata?.avatar as string);

@@ -2,9 +2,10 @@ import { useMemo } from 'react';
 import { isAgentsEndpoint } from 'librechat-data-provider';
 import type { TConversation } from 'librechat-data-provider';
 import type { SetterOrUpdater } from 'recoil';
-import { useGetEndpointsQuery } from '~/data-provider';
+import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import { EndpointIcon } from '~/components/Endpoints';
 import { useAgentsMapContext } from '~/Providers';
+import { getModelSpec } from '~/utils';
 
 export default function AddedConvo({
   addedConvo,
@@ -15,8 +16,13 @@ export default function AddedConvo({
 }) {
   const agentsMap = useAgentsMapContext();
   const { data: endpointsConfig } = useGetEndpointsQuery();
+  const { data: startupConfig } = useGetStartupConfig();
   const title = useMemo(() => {
-    // Priority: agent name > modelDisplayLabel > modelLabel > model
+    const specLabel = getModelSpec({ specName: addedConvo?.spec, startupConfig })?.label;
+    if (specLabel) {
+      return `+ ${specLabel}`;
+    }
+
     if (isAgentsEndpoint(addedConvo?.endpoint) && addedConvo?.agent_id) {
       const agent = agentsMap?.[addedConvo.agent_id];
       if (agent?.name) {
@@ -29,7 +35,7 @@ export default function AddedConvo({
       endpointConfig?.modelDisplayLabel || addedConvo?.modelLabel || addedConvo?.model || 'AI';
 
     return `+ ${displayLabel}`;
-  }, [addedConvo, agentsMap, endpointsConfig]);
+  }, [addedConvo, agentsMap, endpointsConfig, startupConfig]);
 
   if (!addedConvo) {
     return null;

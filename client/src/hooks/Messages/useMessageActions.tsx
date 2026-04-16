@@ -13,9 +13,11 @@ import {
 import type { TMessageProps } from '~/common';
 import type { TMessageChatContext } from '~/common/types';
 import { useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
+import { useGetStartupConfig } from '~/data-provider';
 import useCopyToClipboard from './useCopyToClipboard';
 import { useAuthContext } from '~/hooks/AuthContext';
 import { useGetAddedConvo } from '~/hooks/Chat';
+import { getModelSpec } from '~/utils';
 import { useLocalize } from '~/hooks';
 import store from '~/store';
 
@@ -56,6 +58,8 @@ export default function useMessageActions(props: TMessageActions) {
 
   const agentsMap = useAgentsMapContext();
   const assistantMap = useAssistantsMapContext();
+  const { data: startupConfig } = useGetStartupConfig();
+  const specLabel = getModelSpec({ specName: conversation?.spec, startupConfig })?.label;
 
   const { text, content, messageId = null, isCreatedByUser } = message ?? {};
   const edit = useMemo(() => messageId === currentEditId, [messageId, currentEditId]);
@@ -126,14 +130,18 @@ export default function useMessageActions(props: TMessageActions) {
   const messageLabel = useMemo(() => {
     if (message?.isCreatedByUser === true) {
       return UsernameDisplay ? (user?.name ?? '') || user?.username : localize('com_user_message');
-    } else if (agent) {
-      return agent.name ?? 'Assistant';
-    } else if (assistant) {
-      return assistant.name ?? 'Assistant';
-    } else {
-      return message?.sender;
     }
-  }, [message, agent, assistant, UsernameDisplay, user, localize]);
+    if (specLabel) {
+      return specLabel;
+    }
+    if (agent) {
+      return agent.name ?? 'Assistant';
+    }
+    if (assistant) {
+      return assistant.name ?? 'Assistant';
+    }
+    return message?.sender;
+  }, [message, agent, assistant, specLabel, UsernameDisplay, user, localize]);
 
   const feedbackMutation = useUpdateFeedbackMutation(
     conversation?.conversationId || '',

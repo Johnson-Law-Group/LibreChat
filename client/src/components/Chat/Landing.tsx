@@ -6,7 +6,7 @@ import { useChatContext, useAgentsMapContext, useAssistantsMapContext } from '~/
 import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import ConvoIcon from '~/components/Endpoints/ConvoIcon';
 import { useLocalize, useAuthContext } from '~/hooks';
-import { getIconEndpoint, getEntity } from '~/utils';
+import { getIconEndpoint, getEntity, getModelSpec } from '~/utils';
 
 const containerClassName =
   'shadow-stroke relative flex h-full items-center justify-center rounded-full bg-white dark:bg-presentation dark:text-white text-black dark:after:shadow-none ';
@@ -61,7 +61,8 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
     assistant_id: conversation?.assistant_id,
   });
 
-  const name = entity?.name ?? '';
+  const modelSpec = getModelSpec({ specName: conversation?.spec, startupConfig });
+  const name = modelSpec?.label ?? entity?.name ?? '';
   const description = (entity?.description || conversation?.greeting) ?? '';
 
   const getGreeting = useCallback(() => {

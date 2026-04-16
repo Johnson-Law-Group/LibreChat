@@ -4,7 +4,8 @@ import { useRecoilValue } from 'recoil';
 import type { TMessageContentParts } from 'librechat-data-provider';
 import type { TMessageProps, TMessageIcon } from '~/common';
 import { useMessageHelpers, useLocalize, useAttachments, useContentMetadata } from '~/hooks';
-import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils';
+import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel, getModelSpec } from '~/utils';
+import { useGetStartupConfig } from '~/data-provider';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
 import ContentParts from './Content/ContentParts';
 import { fontSizeAtom } from '~/store/fontSize';
@@ -40,20 +41,25 @@ export default function Message(props: TMessageProps) {
 
   const fontSize = useAtomValue(fontSizeAtom);
   const maximizeChatSpace = useRecoilValue(store.maximizeChatSpace);
+  const { data: startupConfig } = useGetStartupConfig();
+  const specLabel = getModelSpec({ specName: conversation?.spec, startupConfig })?.label;
   const { children, messageId = null, isCreatedByUser } = message ?? {};
 
   const name = useMemo(() => {
-    let result = '';
     if (isCreatedByUser === true) {
-      result = localize('com_user_message');
-    } else if (assistant) {
-      result = assistant.name ?? localize('com_ui_assistant');
-    } else if (agent) {
-      result = agent.name ?? localize('com_ui_agent');
+      return localize('com_user_message');
     }
-
-    return result;
-  }, [assistant, agent, isCreatedByUser, localize]);
+    if (specLabel) {
+      return specLabel;
+    }
+    if (assistant) {
+      return assistant.name ?? localize('com_ui_assistant');
+    }
+    if (agent) {
+      return agent.name ?? localize('com_ui_agent');
+    }
+    return '';
+  }, [assistant, agent, specLabel, isCreatedByUser, localize]);
 
   const iconData: TMessageIcon = useMemo(
     () => ({

@@ -4,7 +4,8 @@ import type { TMessage, Assistant, Agent } from 'librechat-data-provider';
 import type { TMessageProps } from '~/common';
 import MessageEndpointIcon from '../Endpoints/MessageEndpointIcon';
 import ConvoIconURL from '~/components/Endpoints/ConvoIconURL';
-import { getIconEndpoint, logger } from '~/utils';
+import { useGetStartupConfig } from '~/data-provider';
+import { getIconEndpoint, getModelSpec, logger } from '~/utils';
 
 export default function MessageIcon(
   props: Pick<TMessageProps, 'message' | 'conversation'> & {
@@ -13,6 +14,8 @@ export default function MessageIcon(
   },
 ) {
   const { message, conversation, assistant, agent } = props;
+  const { data: startupConfig } = useGetStartupConfig();
+  const specLabel = getModelSpec({ specName: conversation?.spec, startupConfig })?.label;
 
   const messageSettings = useMemo(
     () => ({
@@ -28,9 +31,9 @@ export default function MessageIcon(
   const iconURL = messageSettings.iconURL ?? '';
   let endpoint = messageSettings.endpoint;
   endpoint = getIconEndpoint({ endpointsConfig: undefined, iconURL, endpoint });
-  const assistantName = (assistant ? assistant.name : '') ?? '';
+  const assistantName = specLabel ?? ((assistant ? assistant.name : '') ?? '');
   const assistantAvatar = (assistant ? assistant.metadata?.avatar : '') ?? '';
-  const agentName = (agent ? agent.name : '') ?? '';
+  const agentName = specLabel ?? ((agent ? agent.name : '') ?? '');
   const agentAvatar = (agent ? agent?.avatar?.filepath : '') ?? '';
   const avatarURL = useMemo(() => {
     let result = '';

@@ -8,13 +8,14 @@ import {
   insertTextAtCursor,
   getEntityName,
   getEntity,
+  getModelSpec,
   checkIfScrollable,
 } from '~/utils';
 import { useAssistantsMapContext } from '~/Providers/AssistantsMapContext';
 import { useAgentsMapContext } from '~/Providers/AgentsMapContext';
 import useGetSender from '~/hooks/Conversations/useGetSender';
 import useFileHandling from '~/hooks/Files/useFileHandling';
-import { useInteractionHealthCheck } from '~/data-provider';
+import { useInteractionHealthCheck, useGetStartupConfig } from '~/data-provider';
 import { useChatContext } from '~/Providers/ChatContext';
 import { globalAudioId } from '~/common';
 import { useLocalize } from '~/hooks';
@@ -40,6 +41,7 @@ export default function useTextarea({
   const { handleFiles } = useFileHandling();
   const assistantMap = useAssistantsMapContext();
   const checkHealth = useInteractionHealthCheck();
+  const { data: startupConfig } = useGetStartupConfig();
   const enterToSend = useRecoilValue(store.enterToSend);
 
   const { index, conversation, isSubmitting, filesLoading, setFilesLoading } = useChatContext();
@@ -54,7 +56,8 @@ export default function useTextarea({
     agent_id: conversation?.agent_id,
     assistant_id: conversation?.assistant_id,
   });
-  const entityName = entity?.name ?? '';
+  const modelSpec = getModelSpec({ specName: conversation?.spec, startupConfig });
+  const entityName = modelSpec?.label ?? entity?.name ?? '';
 
   const isNotAppendable = latestMessage?.error === true && !isAssistant;
   // && (conversationId?.length ?? 0) > 6; // also ensures that we don't show the wrong placeholder
@@ -94,8 +97,9 @@ export default function useTextarea({
         return localize('com_endpoint_message_not_appendable');
       }
 
-      const sender =
-        isAssistant || isAgent
+      const sender = modelSpec?.label
+        ? modelSpec.label
+        : isAssistant || isAgent
           ? getEntityName({ name: entityName, isAgent, localize })
           : getSender(conversation as TEndpointOption);
 
