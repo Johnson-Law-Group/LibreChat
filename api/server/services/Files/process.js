@@ -945,11 +945,18 @@ async function saveBase64Image(
   const image = await resizeImageBuffer(inputBuffer, effectiveResolution, endpoint);
   const source = getFileStrategy(appConfig, { isImage: true });
   const { saveBuffer } = getStrategyFunctions(source);
-  const filepath = await saveBuffer({
+  let filepath = await saveBuffer({
     userId: req.user.id,
     fileName: filename,
     buffer: image.buffer,
   });
+  // For azure_blob, saveBuffer returns a full URL with a short-lived SAS token.
+  // Replace it with the relative blob path so the frontend renders via the
+  // /images proxy route (same shape user uploads use), eliminating SAS-expiry
+  // breakage entirely. See api/server/routes/static.js.
+  if (source === FileSources.azure_blob) {
+    filepath = `images/${req.user.id}/${filename}`;
+  }
   return await db.createFile(
     {
       type,
