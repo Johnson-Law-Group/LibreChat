@@ -55,9 +55,12 @@ jobs:
     #   - workflow_dispatch   (manual dispatch from Actions UI)
     # Both bypass this filter because they arrive as workflow_dispatch,
     # not pull_request.
+    # Fork gate: GitNexus is upstream-internal AI-context tooling. See FORK_CHANGES.md.
     if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.user.login == 'danny-avila'
+      github.repository == 'danny-avila/LibreChat' && (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.user.login == 'danny-avila'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -203,8 +206,9 @@ jobs:
 
   post-index:
     needs: index
+    # Fork gate: see `index` job above and FORK_CHANGES.md.
     if: |
-      always() &&
+      github.repository == 'danny-avila/LibreChat' && always() &&
       (inputs.pr_number != '' ||
        (github.triggering_actor == 'github-actions[bot]' && needs.index.result == 'success'))
     runs-on: ubuntu-latest

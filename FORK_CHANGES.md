@@ -184,6 +184,38 @@ hard to scan in monospace-heavy legal text.
 **Upstream risk.** Low — visual classes are easy to spot in conflicts and
 easy to re-apply.
 
+### 7. CI workflow gates (upstream-only jobs)
+
+**What.** Four upstream workflows that fire on `push` to `main` require
+secrets / infrastructure that only `danny-avila/LibreChat` has. We gate them
+with `if: github.repository == 'danny-avila/LibreChat'` so they cleanly
+*skip* on our fork instead of failing red.
+
+**Where.**
+- [.github/workflows/dev-images.yml](.github/workflows/dev-images.yml) — needs
+  `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` to publish `librechat-dev` images.
+- [.github/workflows/locize-i18n-sync.yml](.github/workflows/locize-i18n-sync.yml)
+  — needs `LOCIZE_API_KEY` / `LOCIZE_PROJECT_ID` for the upstream-managed
+  translation service.
+- [.github/workflows/gitnexus-index.yml](.github/workflows/gitnexus-index.yml)
+  and [.github/workflows/gitnexus-deploy.yml](.github/workflows/gitnexus-deploy.yml)
+  — upstream-internal AI-context indexing pipeline.
+
+Only the *entry* jobs are gated; dependent jobs (`create-pull-request`,
+`post-index`, `deploy`) cascade-skip via `needs:`.
+
+**Why.** Failing CI jobs make it impossible to spot real regressions in the
+status dashboard. Skipping is the right semantic — these workflows aren't
+applicable to our deployment.
+
+**Upstream risk.** Low. On future upstream merges:
+- New jobs added to any of these workflows need the same gate.
+- If upstream adds any new push-triggered workflow that needs their secrets,
+  it'll start failing on our fork — gate it the same way.
+- If we ever want to publish our own Docker images / manage our own
+  translation pipeline, flip the gate (remove it for `dev-images.yml` and
+  set the corresponding fork-side secrets).
+
 ## Process for the next upstream merge
 
 1. Create a branch `merge-upstream-<tag>` off `main`.

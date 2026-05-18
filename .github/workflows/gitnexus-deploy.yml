@@ -91,9 +91,12 @@ jobs:
   # Rebuilds the long-lived image only when Dockerfile/entrypoint/extensions
   # change. Skipped on every other run, so index-only deploys are fast.
   build-image:
+    # Fork gate: GitNexus is upstream-internal AI-context tooling. See FORK_CHANGES.md.
     if: |
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.repository == 'danny-avila/LibreChat' && (
+        github.event_name == 'workflow_dispatch' ||
+        github.event.workflow_run.conclusion == 'success'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

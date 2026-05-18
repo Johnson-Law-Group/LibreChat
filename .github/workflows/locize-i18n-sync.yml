@@ -9,6 +9,8 @@ on:
 jobs:
   sync-translations:
     name: Sync Translation Keys with Locize
+    # Fork gate: requires upstream's Locize project credentials. See FORK_CHANGES.md.
+    if: github.repository == 'danny-avila/LibreChat'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository

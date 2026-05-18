@@ -12,6 +12,10 @@ on:
 
 jobs:
   build:
+    # Fork gate: this workflow publishes to upstream's Docker Hub.
+    # See FORK_CHANGES.md for the rationale; remove this line if we ever
+    # want to publish our own images.
+    if: github.repository == 'danny-avila/LibreChat'
     runs-on: ubuntu-latest
     timeout-minutes: 130
     strategy:
