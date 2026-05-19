@@ -184,7 +184,41 @@ hard to scan in monospace-heavy legal text.
 **Upstream risk.** Low — visual classes are easy to spot in conflicts and
 easy to re-apply.
 
-### 7. CI workflow gates (upstream-only jobs)
+### 7. ModelSpec list — additive merge across config overrides
+
+**What.** Add `'modelSpecs.list': 'name'` to `ARRAY_MERGE_KEYS` so that
+multiple matching config-override docs (public + group memberships) UNION
+their `modelSpecs.list` entries instead of the last config wholesale-replacing
+all prior ones. Upstream merges arrays by replacement (line 126,
+`result[key] = sourceVal`); only `endpoints.custom` was previously
+allowlisted as merge-by-key.
+
+**Where.**
+- [packages/data-schemas/src/app/resolution.ts](packages/data-schemas/src/app/resolution.ts)
+  — `ARRAY_MERGE_KEYS` constant. Adds `'modelSpecs.list': 'name'` alongside
+  the existing `'endpoints.custom': 'name'` entry.
+- [packages/data-schemas/src/app/resolution.spec.ts](packages/data-schemas/src/app/resolution.spec.ts)
+  — new test case `merges modelSpecs.list arrays by name across multiple
+  group overrides` documenting the expected union behavior.
+
+**Why.** Our deployment uses per-principal config overrides (`public`, plus
+several `group` principals like `power-users`, `dev-users`,
+`client-portal-users`) to gate which modelSpecs each user sees. Upstream's
+wholesale-replace semantics meant that a user in multiple groups only ever
+saw the last-merged group's list — strictly determined by `priority` ASC then
+`_id` ASC. With same-priority groups, only one group's specs would ever
+surface, defeating the point of multi-group membership for spec visibility.
+Adding `modelSpecs.list` to `ARRAY_MERGE_KEYS` lets each group contribute its
+own extras and have them all stack additively, with `mergeArrayByKey`
+deduping by spec `name` so the same spec showing up in multiple groups
+doesn't multiply.
+
+**Upstream risk.** Low. The `ARRAY_MERGE_KEYS` map is a stable extension
+point (it exists specifically to allowlist additional paths). Upstream adding
+new entries won't conflict; renaming the map or restructuring the deep-merge
+path is the only thing that would.
+
+### 8. CI workflow gates (upstream-only jobs)
 
 **What.** Four upstream workflows that fire on `push` to `main` require
 secrets / infrastructure that only `danny-avila/LibreChat` has. We gate them

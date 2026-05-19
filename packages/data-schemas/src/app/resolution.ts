@@ -18,6 +18,7 @@ const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
  */
 const ARRAY_MERGE_KEYS: Record<string, string> = {
   'endpoints.custom': 'name',
+  'modelSpecs.list': 'name',
 };
 
 /**

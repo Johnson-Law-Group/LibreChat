@@ -56,6 +56,71 @@ describe('mergeConfigOverrides', () => {
     expect(result.endpoints).toEqual(['anthropic', 'google']);
   });
 
+  it('merges modelSpecs.list arrays by name across multiple group overrides', () => {
+    // Reproduces the multi-membership scenario: a user in multiple groups
+    // (each contributing its own modelSpecs.list) should see the union of
+    // all groups' specs, not just the last-merged group's list. This is
+    // why `modelSpecs.list` is in ARRAY_MERGE_KEYS — same as endpoints.custom.
+    const base = {
+      modelSpecs: {
+        list: [{ name: 'ChatGPT', preset: { endpoint: 'JLG' } }],
+      },
+    } as unknown as AppConfig;
+
+    const configs = [
+      // public (all users)
+      fakeConfig(
+        {
+          modelSpecs: {
+            list: [
+              { name: 'ChatGPT', preset: { endpoint: 'JLG', model: 'gpt-5.3' } },
+              { name: 'Web Research', preset: { endpoint: 'agents', agent_id: 'agent_wr' } },
+            ],
+          },
+        },
+        10,
+      ),
+      // power-users group
+      fakeConfig(
+        {
+          modelSpecs: {
+            list: [{ name: 'Claude Opus', preset: { endpoint: 'JLG', model: 'claude-opus' } }],
+          },
+        },
+        10,
+      ),
+      // client-portal-users group
+      fakeConfig(
+        {
+          modelSpecs: {
+            list: [
+              { name: 'Client Portal', preset: { endpoint: 'agents', agent_id: 'agent_cp' } },
+            ],
+          },
+        },
+        10,
+      ),
+    ];
+
+    const result = mergeConfigOverrides(base, configs) as unknown as Record<string, unknown>;
+    const modelSpecs = result.modelSpecs as Record<string, unknown>;
+    const list = modelSpecs.list as Array<Record<string, unknown>>;
+
+    // ChatGPT: deep-merged (base + public update)
+    // Web Research: appended from public
+    // Claude Opus: appended from power-users
+    // Client Portal: appended from client-portal-users
+    expect(list).toHaveLength(4);
+    expect(list.map((s) => s.name)).toEqual([
+      'ChatGPT',
+      'Web Research',
+      'Claude Opus',
+      'Client Portal',
+    ]);
+    // Deep-merged: base preset.endpoint preserved, override added model
+    expect(list[0].preset).toEqual({ endpoint: 'JLG', model: 'gpt-5.3' });
+  });
+
   it('merges endpoints.custom arrays by name instead of replacing', () => {
     const base = {
       endpoints: {
