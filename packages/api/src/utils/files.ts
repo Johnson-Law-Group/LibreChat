@@ -7,6 +7,7 @@ const USER_FACING_UPLOAD_ERRORS = [
   'Invalid file format',
   'exceeds token limit',
   'Unable to extract text from',
+  'must be uploaded with File Search',
 ] as const;
 
 const ASCII_FILENAME_SAFE_PATTERN = /^[a-zA-Z0-9._-]$/;

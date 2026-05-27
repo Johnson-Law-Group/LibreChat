@@ -23,6 +23,7 @@ import {
   useGetAgentsConfig,
   useLocalize,
 } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
 import { ephemeralAgentByConvoId } from '~/store';
 import { useDragDropContext } from '~/Providers';
 
@@ -54,6 +55,8 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     agentId,
     ephemeralAgent,
   );
+  const { data: startupConfig } = useGetStartupConfig();
+  const providerUploadEnabled = startupConfig?.interface?.providerFileUpload !== false;
 
   const options = useMemo(() => {
     const _options: FileOption[] = [];
@@ -72,11 +75,13 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         endpointType === EModelEndpoint.azureOpenAI) &&
       useResponsesApi === true;
 
-    // Check if provider supports document upload
+    // Check if provider supports document upload (hidden when the base
+    // provider upload is disabled via interface.providerFileUpload).
     if (
-      isDocumentSupportedProvider(endpointType) ||
-      isDocumentSupportedProvider(currentProvider) ||
-      isAzureWithResponsesApi
+      providerUploadEnabled &&
+      (isDocumentSupportedProvider(endpointType) ||
+        isDocumentSupportedProvider(currentProvider) ||
+        isAzureWithResponsesApi)
     ) {
       const supportsImageDocVideoAudio =
         currentProvider === EModelEndpoint.google || currentProvider === Providers.OPENROUTER;
@@ -107,7 +112,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
         icon: <FileImageIcon className="icon-md" />,
         condition: validFileTypes,
       });
-    } else {
+    } else if (providerUploadEnabled) {
       // Only show image upload option if all files are images and provider doesn't support documents
       _options.push({
         label: localize('com_ui_upload_image_input'),
@@ -149,6 +154,7 @@ const DragDropModal = ({ onOptionSelect, setShowModal, files, isVisible }: DragD
     useResponsesApi,
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
+    providerUploadEnabled,
   ]);
 
   if (!isVisible) {

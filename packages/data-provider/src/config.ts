@@ -953,6 +953,8 @@ export const interfaceSchema = z
       .optional(),
     fileSearch: z.boolean().optional(),
     fileCitations: z.boolean().optional(),
+    /** Show the "Upload to Provider" (direct file-to-model) attach option. */
+    providerFileUpload: z.boolean().optional(),
     remoteAgents: z
       .object({
         use: z.boolean().optional(),
@@ -1013,6 +1015,7 @@ export const interfaceSchema = z
     },
     fileSearch: true,
     fileCitations: true,
+    providerFileUpload: true,
     remoteAgents: {
       use: false,
       create: false,

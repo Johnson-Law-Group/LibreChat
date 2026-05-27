@@ -161,10 +161,16 @@ const AttachFileMenu = ({
           endpointType === EModelEndpoint.azureOpenAI) &&
         useResponsesApi === true;
 
+      // The base "Upload to Provider"/"Upload Image" item can be hidden via the
+      // interface.providerFileUpload flag (e.g. to force documents through File
+      // Search/RAG instead of direct-to-model upload).
+      const providerUploadEnabled = startupConfig?.interface?.providerFileUpload !== false;
+
       if (
-        isDocumentSupportedProvider(endpointType) ||
-        isDocumentSupportedProvider(currentProvider) ||
-        isAzureWithResponsesApi
+        providerUploadEnabled &&
+        (isDocumentSupportedProvider(endpointType) ||
+          isDocumentSupportedProvider(currentProvider) ||
+          isAzureWithResponsesApi)
       ) {
         items.push({
           label: localize('com_ui_upload_provider'),
@@ -183,7 +189,7 @@ const AttachFileMenu = ({
           },
           icon: <FileImageIcon className="icon-md" />,
         });
-      } else {
+      } else if (providerUploadEnabled) {
         items.push({
           label: localize('com_ui_upload_image_input'),
           onClick: () => {
@@ -268,6 +274,7 @@ const AttachFileMenu = ({
     codeAllowedByAgent,
     fileSearchAllowedByAgent,
     setIsSharePointDialogOpen,
+    startupConfig?.interface?.providerFileUpload,
   ]);
 
   const menuTrigger = (

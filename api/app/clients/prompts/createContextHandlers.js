@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { logger } = require('@librechat/data-schemas');
-const { isEnabled, generateShortLivedToken } = require('@librechat/api');
+const { generateShortLivedToken } = require('@librechat/api');
 
 const footer = `Use the context as your learned knowledge to better answer the user.
 
@@ -19,14 +19,34 @@ function createContextHandlers(req, userMessageContent) {
   const processedFiles = [];
   const processedIds = new Set();
   const jwtToken = generateShortLivedToken(req.user.id);
-  const useFullContext = isEnabled(process.env.RAG_USE_FULL_CONTEXT);
+  const headers = { Authorization: `Bearer ${jwtToken}` };
+  // Documents at or under this page count are fed to the model in full (no
+  // querying); larger documents use top-K semantic retrieval. The page count
+  // comes from our custom RAG API (GET /documents/{id}/pages).
+  const fullContextMaxPages = parseInt(process.env.RAG_FULL_CONTEXT_MAX_PAGES || '30', 10);
+
+  /** Page count for a file; Infinity on failure so we fall back to retrieval. */
+  const getPageCount = async (file) => {
+    try {
+      const { data } = await axios.get(
+        `${process.env.RAG_API_URL}/documents/${file.file_id}/pages`,
+        { headers },
+      );
+      return data?.pages ?? Infinity;
+    } catch (error) {
+      logger.warn(
+        `[createContextHandlers] Could not fetch page count for ${file.filename}, using retrieval:`,
+        error?.message,
+      );
+      return Infinity;
+    }
+  };
 
   const query = async (file) => {
-    if (useFullContext) {
+    const pages = await getPageCount(file);
+    if (pages <= fullContextMaxPages) {
       return axios.get(`${process.env.RAG_API_URL}/documents/${file.file_id}/context`, {
-        headers: {
-          Authorization: `Bearer ${jwtToken}`,
-        },
+        headers,
       });
     }
 
@@ -38,10 +58,7 @@ function createContextHandlers(req, userMessageContent) {
         k: 4,
       },
       {
-        headers: {
-          Authorization: `Bearer ${jwtToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { ...headers, 'Content-Type': 'application/json' },
       },
     );
   };
@@ -108,7 +125,9 @@ function createContextHandlers(req, userMessageContent) {
             </context>
           </file>`;
 
-                if (useFullContext) {
+                // Full-context responses are a plain string; retrieval
+                // responses are an array of [doc, distance] pairs.
+                if (typeof contextItems === 'string') {
                   return generateContext(`\n${contextItems}`);
                 }
 
@@ -126,18 +145,13 @@ function createContextHandlers(req, userMessageContent) {
               })
               .join('');
 
-      if (useFullContext) {
-        const prompt = `${header}
-          ${context}
-          ${footer}`;
-
-        return prompt;
-      }
-
+      // A conversation can mix short (full-text) and long (retrieved) files,
+      // so use one neutral wrapper. Small files contribute their full text;
+      // large files contribute the most relevant retrieved sections.
       const prompt = `${header}
         ${files}
 
-        A semantic search was executed with the user's message as the query, retrieving the following context inside <context></context> XML tags.
+        Context from the attached file(s) is provided inside <context></context> XML tags. For larger files this is the most relevant retrieved sections; for smaller files it is the full document.
 
         <context>${context}
         </context>

@@ -422,6 +422,51 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
   );
 };
 
+/** Max pages allowed for a direct "Upload to Provider" PDF before we steer the
+ * user to File Search (RAG). Large docs go through File Search instead. */
+const MAX_PROVIDER_UPLOAD_PAGES = parseInt(process.env.MAX_PROVIDER_UPLOAD_PAGES || '20', 10);
+
+/**
+ * PDF page count via pdfjs. Returns 0 on any read failure so a counting error
+ * never blocks an upload.
+ * @param {string} filePath
+ * @returns {Promise<number>}
+ */
+const getPdfPageCount = async (filePath) => {
+  try {
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await fs.promises.readFile(filePath));
+    const pdf = await getDocument({ data }).promise;
+    return pdf.numPages;
+  } catch (error) {
+    logger.warn(
+      `[assertProviderUploadWithinPageLimit] Could not read PDF page count: ${error?.message}`,
+    );
+    return 0;
+  }
+};
+
+/**
+ * Block direct "Upload to Provider" of large PDFs, steering users to File
+ * Search (RAG). Uploads carrying a tool_resource (file_search, context,
+ * execute_code) are exempt — large documents are exactly what File Search is for.
+ * @param {{ file?: Express.Multer.File, tool_resource?: string }} params
+ */
+const assertProviderUploadWithinPageLimit = async ({ file, tool_resource }) => {
+  if (tool_resource) {
+    return;
+  }
+  if (!file || file.mimetype !== 'application/pdf') {
+    return;
+  }
+  const pages = await getPdfPageCount(file.path);
+  if (pages > MAX_PROVIDER_UPLOAD_PAGES) {
+    throw new Error(
+      `This document has ${pages} pages. Documents over ${MAX_PROVIDER_UPLOAD_PAGES} pages must be uploaded with File Search — select "File Search" from the "+" menu, then attach the file.`,
+    );
+  }
+};
+
 /**
  * Applies the current strategy for file uploads.
  * Saves file metadata to the database with an expiry TTL.
@@ -450,6 +495,7 @@ const processFileUpload = async ({ req, res, metadata }) => {
   }
 
   const { file } = req;
+  await assertProviderUploadWithinPageLimit({ file, tool_resource: metadata.tool_resource });
   const sanitizedUploadFn = createSanitizedUploadWrapper(handleFileUpload);
   const {
     id,
@@ -557,6 +603,8 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
   if (!messageAttachment && !agent_id) {
     throw new Error('No agent ID provided for agent file upload');
   }
+
+  await assertProviderUploadWithinPageLimit({ file, tool_resource });
 
   const isImage = file.mimetype.startsWith('image');
   let fileInfoMetadata;

@@ -250,6 +250,84 @@ applicable to our deployment.
   translation pipeline, flip the gate (remove it for `dev-images.yml` and
   set the corresponding fork-side secrets).
 
+### 9. JLG custom RAG / File Search integration
+
+**What.** We back LibreChat's File Search with our **own** RAG API (the JLG
+backend FastAPI `/rag` router, pointed at by `RAG_API_URL`) instead of the
+stock `rag_api` service, and add three behaviors around document uploads:
+
+- **(a) Size-based full-context routing.** `createContextHandlers` decides
+  *per file* whether to feed the whole document as context vs. top-K
+  retrieval, based on the file's page count (fetched from our API via
+  `GET /documents/{id}/pages`) and `RAG_FULL_CONTEXT_MAX_PAGES` (default 30).
+  Short docs → `GET /documents/{id}/context` (full text); long docs →
+  `POST /query`. Context formatting is shape-based (a string response = full
+  context, an array = retrieval pairs) so one conversation can mix both. This
+  replaces upstream's single global `RAG_USE_FULL_CONTEXT` env flag.
+- **(b) `interface.providerFileUpload` flag.** New interface boolean (default
+  `true`) that hides the base "Upload to Provider" / "Upload Image" attach
+  option, steering document uploads to File Search (RAG). Upstream has no
+  toggle for this item — it's otherwise gated only by
+  `isDocumentSupportedProvider`.
+- **(c) Provider-upload page-count gate.** A direct "Upload to Provider" PDF
+  over `MAX_PROVIDER_UPLOAD_PAGES` (default 20) is rejected with a message
+  steering the user to File Search. File Search / context / code uploads
+  (which carry a `tool_resource`) are exempt — large docs are what File Search
+  is for. The message is allowlisted so it reaches the user verbatim instead
+  of the generic "Error processing file". The gate is scoped to PDFs only
+  (page count comes from `pdfjs`); other formats are not checked. Note it
+  also fires on the assistants-endpoint path (`processFileUpload`), so an
+  assistant PDF attachment over the limit with no `tool_resource` is blocked
+  the same way.
+
+**Where.**
+- (a) [api/app/clients/prompts/createContextHandlers.js](api/app/clients/prompts/createContextHandlers.js)
+  — per-file `query()` routing (`getPageCount` → `/context` vs `/query`) and
+  shape-based context formatting; `RAG_FULL_CONTEXT_MAX_PAGES`.
+- (b) [packages/data-provider/src/config.ts](packages/data-provider/src/config.ts)
+  — `providerFileUpload` field in `interfaceSchema` + `true` in its defaults;
+  [packages/data-schemas/src/app/interface.ts](packages/data-schemas/src/app/interface.ts)
+  — `loadDefaultInterface` passes it through to startupConfig;
+  [client/src/components/Chat/Input/Files/AttachFileMenu.tsx](client/src/components/Chat/Input/Files/AttachFileMenu.tsx)
+  and [client/src/components/Chat/Input/Files/DragDropModal.tsx](client/src/components/Chat/Input/Files/DragDropModal.tsx)
+  — gate the base provider/image-upload `items.push` on
+  `startupConfig?.interface?.providerFileUpload !== false`.
+- (c) [api/server/services/Files/process.js](api/server/services/Files/process.js)
+  — `getPdfPageCount` (inline pdfjs) + `assertProviderUploadWithinPageLimit`,
+  called early in both `processFileUpload` and `processAgentFileUpload`;
+  `MAX_PROVIDER_UPLOAD_PAGES`.
+  [packages/api/src/utils/files.ts](packages/api/src/utils/files.ts) — added
+  `'must be uploaded with File Search'` to `USER_FACING_UPLOAD_ERRORS` so the
+  gate's message is surfaced to the user.
+
+**Why.** Users were uploading scanned medical-record PDFs via "Upload to
+Provider," which sends raw page images to the model on every turn (200k–350k
+image tokens/request). We route documents through a RAG API we control (OCR +
+pgvector retrieval on the JLG backend). The `providerFileUpload` flag and the
+page gate steer users off the expensive direct-upload path onto File Search;
+the size-based routing gives small docs full-text fidelity while large docs
+use retrieval. `RAG_API_URL` must point at the backend (`jlg-ai-backend-{env}`
++ `/rag`); the backend validates LibreChat's short-lived JWT (signed with the
+shared `JWT_SECRET`) against its `LIBRECHAT_JWT_SECRET`.
+
+**New env vars.** `RAG_FULL_CONTEXT_MAX_PAGES` (default 30),
+`MAX_PROVIDER_UPLOAD_PAGES` (default 20), and the existing `RAG_API_URL`.
+
+**Upstream risk.**
+- `process.js` is high-churn (already #2 below). Our change is two early calls
+  + two module-level helpers — re-apply at the top of `processFileUpload` /
+  `processAgentFileUpload`.
+- `createContextHandlers.js`: upstream may rework the RAG/context flow or the
+  `RAG_USE_FULL_CONTEXT` handling we replaced. Re-apply the per-file routing +
+  shape-based formatting.
+- `interface` schema/loader additions are additive; risk is an upstream
+  restructure of `interfaceSchema` / `loadDefaultInterface` (re-add the field
+  + passthrough). The AttachFileMenu/DragDropModal gate is a small conditional
+  around the base-upload `items.push`.
+- `USER_FACING_UPLOAD_ERRORS` is a stable allowlist; keep the
+  `'must be uploaded with File Search'` fragment in sync with the message text
+  in `process.js`.
+
 ## Process for the next upstream merge
 
 1. Create a branch `merge-upstream-<tag>` off `main`.
@@ -257,7 +335,7 @@ applicable to our deployment.
 3. For every file listed in this doc, verify the customization survived the
    auto-merge. The handy check is:
    ```sh
-   grep -n 'needsAzureRefresh\|resolveHeaders\|processMCPEnv\|specLabel\|h-10 w-10\|font-bold' <file>
+   grep -n 'needsAzureRefresh\|resolveHeaders\|processMCPEnv\|specLabel\|h-10 w-10\|font-bold\|modelSpecs.list\|getPageCount\|providerFileUpload\|assertProviderUploadWithinPageLimit\|RAG_FULL_CONTEXT_MAX_PAGES' <file>
    ```
 4. Re-read this doc top-to-bottom and update the affected sections if any of
    the touched files moved, were renamed, or had their surrounding context
@@ -283,3 +361,5 @@ Ranked by historical conflict frequency:
 4. `client/src/components/Chat/Messages/MessageParts.tsx` (and sibling
    icon/title files)
 5. `packages/data-provider/src/parsers.ts`
+6. `api/app/clients/prompts/createContextHandlers.js` (RAG full-context vs
+   retrieval routing — section 9)
