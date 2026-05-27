@@ -299,6 +299,10 @@ stock `rag_api` service, and add three behaviors around document uploads:
   [packages/api/src/utils/files.ts](packages/api/src/utils/files.ts) — added
   `'must be uploaded with File Search'` to `USER_FACING_UPLOAD_ERRORS` so the
   gate's message is surfaced to the user.
+- (d) [client/src/hooks/Files/useFileHandling.ts](client/src/hooks/Files/useFileHandling.ts)
+  — upload/validation error toast `duration` raised from 5000 to 10000 ms in
+  `displayToast`, so the page-gate message (and other upload errors) stays
+  readable long enough to act on.
 
 **Why.** Users were uploading scanned medical-record PDFs via "Upload to
 Provider," which sends raw page images to the model on every turn (200k–350k
