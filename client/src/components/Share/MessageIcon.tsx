@@ -6,6 +6,7 @@ import MessageEndpointIcon from '../Endpoints/MessageEndpointIcon';
 import ConvoIconURL from '~/components/Endpoints/ConvoIconURL';
 import { useGetStartupConfig } from '~/data-provider';
 import { getIconEndpoint, getModelSpec, logger } from '~/utils';
+import { isImageURL } from '~/utils/icons';
 
 export default function MessageIcon(
   props: Pick<TMessageProps, 'message' | 'conversation'> & {
@@ -52,7 +53,7 @@ export default function MessageIcon(
     agentName,
     agentAvatar,
   });
-  if (message?.isCreatedByUser !== true && iconURL && iconURL.includes('http')) {
+  if (message?.isCreatedByUser !== true && isImageURL(iconURL)) {
     return (
       <ConvoIconURL
         iconURL={iconURL}
