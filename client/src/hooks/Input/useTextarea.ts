@@ -17,6 +17,7 @@ import useGetSender from '~/hooks/Conversations/useGetSender';
 import useFileHandling from '~/hooks/Files/useFileHandling';
 import { useInteractionHealthCheck, useGetStartupConfig } from '~/data-provider';
 import { useChatContext } from '~/Providers/ChatContext';
+import { useLatestMessage } from '~/hooks/Messages/useLatestMessage';
 import { globalAudioId } from '~/common';
 import { useLocalize } from '~/hooks';
 import store from '~/store';
@@ -45,7 +46,7 @@ export default function useTextarea({
   const enterToSend = useRecoilValue(store.enterToSend);
 
   const { index, conversation, isSubmitting, filesLoading, setFilesLoading } = useChatContext();
-  const latestMessage = useRecoilValue(store.latestMessageFamily(index));
+  const latestMessage = useLatestMessage(index);
   const [activePrompt, setActivePrompt] = useRecoilState(store.activePromptByIndex(index));
 
   const { endpoint = '' } = conversation || {};
@@ -97,11 +98,11 @@ export default function useTextarea({
         return localize('com_endpoint_message_not_appendable');
       }
 
-      const sender = modelSpec?.label
-        ? modelSpec.label
-        : isAssistant || isAgent
+      const fallbackSender =
+        isAssistant || isAgent
           ? getEntityName({ name: entityName, isAgent, localize })
           : getSender(conversation as TEndpointOption);
+      const sender = modelSpec?.label ?? fallbackSender;
 
       return `${localize('com_endpoint_message_new', {
         0: sender ? sender : localize('com_endpoint_ai'),
@@ -140,6 +141,7 @@ export default function useTextarea({
     conversation,
     latestMessage,
     isNotAppendable,
+    modelSpec?.label,
   ]);
 
   const handleKeyDown = useCallback(

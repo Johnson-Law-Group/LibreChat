@@ -15,10 +15,12 @@ merge a new upstream release that touches one of the files below.
 
 ## Upstream baseline
 
-Last upstream merge: **`v0.8.6-rc1`** (merged 2026-05-18 onto branch
-`merge-upstream-v0.8.6-rc1`).
+Last upstream merge: **`v0.8.6`** (merged 2026-06-05 onto branch
+`merge-upstream-v0.8.6`).
 
-Previous baseline before that merge was upstream commit `5cc783b8e` (Apr 2025).
+Previous baselines:
+- `v0.8.6-rc1` (merged 2026-05-18 onto branch `merge-upstream-v0.8.6-rc1`)
+- `5cc783b8e` (Apr 2025)
 
 ## Customizations
 

@@ -5,6 +5,7 @@ import { getIconKey, getEntity, getIconEndpoint, getModelSpec } from '~/utils';
 import ConvoIconURL from '~/components/Endpoints/ConvoIconURL';
 import { useGetStartupConfig } from '~/data-provider';
 import { icons } from '~/hooks/Endpoint/Icons';
+import { isImageURL } from '~/utils/icons';
 
 export default function ConvoIcon({
   conversation,
@@ -54,7 +55,7 @@ export default function ConvoIcon({
 
   return (
     <>
-      {iconURL && iconURL.includes('http') ? (
+      {isImageURL(iconURL) ? (
         <ConvoIconURL
           iconURL={iconURL}
           modelLabel={conversation?.chatGptLabel ?? conversation?.modelLabel ?? ''}

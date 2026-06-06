@@ -6,6 +6,7 @@ import MessageEndpointIcon from '../Endpoints/MessageEndpointIcon';
 import ConvoIconURL from '~/components/Endpoints/ConvoIconURL';
 import { useGetStartupConfig } from '~/data-provider';
 import { getIconEndpoint, getModelSpec, logger } from '~/utils';
+import { isImageURL } from '~/utils/icons';
 
 export default function MessageIcon(
   props: Pick<TMessageProps, 'message' | 'conversation'> & {
@@ -31,9 +32,9 @@ export default function MessageIcon(
   const iconURL = messageSettings.iconURL ?? '';
   let endpoint = messageSettings.endpoint;
   endpoint = getIconEndpoint({ endpointsConfig: undefined, iconURL, endpoint });
-  const assistantName = specLabel ?? ((assistant ? assistant.name : '') ?? '');
+  const assistantName = specLabel ?? (assistant ? assistant.name : '') ?? '';
   const assistantAvatar = (assistant ? assistant.metadata?.avatar : '') ?? '';
-  const agentName = specLabel ?? ((agent ? agent.name : '') ?? '');
+  const agentName = specLabel ?? (agent ? agent.name : '') ?? '';
   const agentAvatar = (agent ? agent?.avatar?.filepath : '') ?? '';
   const avatarURL = useMemo(() => {
     let result = '';
@@ -52,7 +53,7 @@ export default function MessageIcon(
     agentName,
     agentAvatar,
   });
-  if (message?.isCreatedByUser !== true && iconURL && iconURL.includes('http')) {
+  if (message?.isCreatedByUser !== true && isImageURL(iconURL)) {
     return (
       <ConvoIconURL
         iconURL={iconURL}
