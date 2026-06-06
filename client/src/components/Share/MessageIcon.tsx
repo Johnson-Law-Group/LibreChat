@@ -32,9 +32,9 @@ export default function MessageIcon(
   const iconURL = messageSettings.iconURL ?? '';
   let endpoint = messageSettings.endpoint;
   endpoint = getIconEndpoint({ endpointsConfig: undefined, iconURL, endpoint });
-  const assistantName = specLabel ?? ((assistant ? assistant.name : '') ?? '');
+  const assistantName = specLabel ?? (assistant ? assistant.name : '') ?? '';
   const assistantAvatar = (assistant ? assistant.metadata?.avatar : '') ?? '';
-  const agentName = specLabel ?? ((agent ? agent.name : '') ?? '');
+  const agentName = specLabel ?? (agent ? agent.name : '') ?? '';
   const agentAvatar = (agent ? agent?.avatar?.filepath : '') ?? '';
   const avatarURL = useMemo(() => {
     let result = '';

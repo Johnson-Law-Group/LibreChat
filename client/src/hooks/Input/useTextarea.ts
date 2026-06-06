@@ -98,11 +98,11 @@ export default function useTextarea({
         return localize('com_endpoint_message_not_appendable');
       }
 
-      const sender = modelSpec?.label
-        ? modelSpec.label
-        : isAssistant || isAgent
+      const fallbackSender =
+        isAssistant || isAgent
           ? getEntityName({ name: entityName, isAgent, localize })
           : getSender(conversation as TEndpointOption);
+      const sender = modelSpec?.label ?? fallbackSender;
 
       return `${localize('com_endpoint_message_new', {
         0: sender ? sender : localize('com_endpoint_ai'),
@@ -141,6 +141,7 @@ export default function useTextarea({
     conversation,
     latestMessage,
     isNotAppendable,
+    modelSpec?.label,
   ]);
 
   const handleKeyDown = useCallback(

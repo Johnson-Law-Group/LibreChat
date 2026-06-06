@@ -341,7 +341,10 @@ export class MCPServersRegistry {
     const configRepo = this.getConfigRepository(storageLocation);
     let parsedConfig: t.ParsedServerConfig;
     try {
-      const resolvedConfig = processMCPEnv({ options: config, dbSourced: storageLocation === 'DB' });
+      const resolvedConfig = processMCPEnv({
+        options: config,
+        dbSourced: storageLocation === 'DB',
+      });
       parsedConfig = await MCPServerInspector.inspect(
         serverName,
         resolvedConfig,
@@ -399,7 +402,10 @@ export class MCPServersRegistry {
     const { inspectionFailed: _, ...configForInspection } = existing;
     let parsedConfig: t.ParsedServerConfig;
     try {
-      const resolvedConfig = processMCPEnv({ options: configForInspection, dbSourced: existing.source === 'user' });
+      const resolvedConfig = processMCPEnv({
+        options: configForInspection,
+        dbSourced: existing.source === 'user',
+      });
       parsedConfig = await MCPServerInspector.inspect(
         serverName,
         resolvedConfig,
