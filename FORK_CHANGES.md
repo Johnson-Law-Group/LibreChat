@@ -281,6 +281,17 @@ stock `rag_api` service, and add three behaviors around document uploads:
   also fires on the assistants-endpoint path (`processFileUpload`), so an
   assistant PDF attachment over the limit with no `tool_resource` is blocked
   the same way.
+- **(e) Full-context injection on the agents endpoint.** Upstream only runs
+  `createContextHandlers` for non-agent endpoints (`!isAgentsEndpoint`), so for
+  agents an uploaded File Search doc was never inlined or even announced — the
+  model only got a `file_search` tool it had to choose to call, and with no
+  signal a document existed it typically didn't. We now run the handler for
+  agents too, in an `agentMode`: small docs (≤ `RAG_FULL_CONTEXT_MAX_PAGES`) are
+  inlined in full and dropped from the `file_search` tool resource (redundant
+  once inlined); large docs are announced but left to the tool (no top-K
+  injection). The fully-inlined file_ids are passed from `buildMessages` to
+  `primeResources` via `req.fullyInjectedFileIds`. Non-agent behavior is
+  unchanged.
 
 **Where.**
 - (a) [api/app/clients/prompts/createContextHandlers.js](api/app/clients/prompts/createContextHandlers.js)
@@ -305,6 +316,13 @@ stock `rag_api` service, and add three behaviors around document uploads:
   — upload/validation error toast `duration` raised from 5000 to 10000 ms in
   `displayToast`, so the page-gate message (and other upload errors) stays
   readable long enough to act on.
+- (e) [api/app/clients/prompts/createContextHandlers.js](api/app/clients/prompts/createContextHandlers.js)
+  — `agentMode` option (large docs announced, not retrieval-injected) +
+  `getInjectedFileIds()`;
+  [api/server/controllers/agents/client.js](api/server/controllers/agents/client.js)
+  — create the handler for agents and stash `req.fullyInjectedFileIds`;
+  [packages/api/src/agents/resources.ts](packages/api/src/agents/resources.ts)
+  — skip the `file_search` resource for fully-inlined file_ids.
 
 **Why.** Users were uploading scanned medical-record PDFs via "Upload to
 Provider," which sends raw page images to the model on every turn (200k–350k

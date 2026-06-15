@@ -94,11 +94,19 @@ const categorizeFileForToolResources = ({
   tool_resources,
   requestFileSet,
   processedResourceFiles,
+  fullyInjectedFileIds,
 }: {
   file: TFile;
   tool_resources: AgentToolResources;
   requestFileSet: Set<string>;
   processedResourceFiles: Set<string>;
+  /**
+   * file_ids already inlined in full by createContextHandlers (small docs).
+   * These are skipped for file_search: their text is in context, so exposing
+   * the search tool over them would be redundant. Large docs are absent here
+   * and still become file_search resources.
+   */
+  fullyInjectedFileIds?: Set<string>;
 }): void => {
   if (file.metadata?.codeEnvRef) {
     addFileToResource({
@@ -111,6 +119,9 @@ const categorizeFileForToolResources = ({
   }
 
   if (file.embedded === true) {
+    if (fullyInjectedFileIds?.has(file.file_id)) {
+      return;
+    }
     addFileToResource({
       file,
       resourceType: EToolResources.file_search,
@@ -199,6 +210,13 @@ export const primeResources = async ({
      */
     const processedResourceFiles = new Set<string>();
     /**
+     * Files already inlined in full by createContextHandlers (set on `req`
+     * during buildMessages, which runs before this). Skipped for file_search
+     * so a fully-inlined small doc doesn't also power the redundant tool.
+     */
+    const fullyInjectedFileIds = (req as ServerRequest & { fullyInjectedFileIds?: Set<string> })
+      .fullyInjectedFileIds;
+    /**
      * The agent's tool resources object that will be updated with categorized files
      * Create a shallow copy first to avoid mutating the original
      */
@@ -282,6 +300,7 @@ export const primeResources = async ({
           tool_resources,
           requestFileSet,
           processedResourceFiles,
+          fullyInjectedFileIds,
         });
       }
     }

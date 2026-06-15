@@ -10,14 +10,28 @@ In your response, remember to follow these guidelines:
 - Avoid mentioning that you obtained the information from the context.
 `;
 
-function createContextHandlers(req, userMessageContent) {
+/**
+ * @param {ServerRequest} req
+ * @param {string} userMessageContent
+ * @param {{ agentMode?: boolean }} [options] - When `agentMode` is true, large
+ *   documents are NOT injected via top-K retrieval; they are only announced so
+ *   the model knows to reach for the agent's `file_search` tool. Small documents
+ *   are still inlined in full. For non-agent endpoints behavior is unchanged.
+ */
+function createContextHandlers(req, userMessageContent, options = {}) {
   if (!process.env.RAG_API_URL) {
     return;
   }
 
+  const { agentMode = false } = options;
+
   const queryPromises = [];
   const processedFiles = [];
   const processedIds = new Set();
+  /** file_ids inlined in full (small docs); used to drop the redundant
+   * file_search tool resource for those files in primeResources. Populated
+   * during createContext(). */
+  const injectedFileIds = [];
   const jwtToken = generateShortLivedToken(req.user.id);
   const headers = { Authorization: `Bearer ${jwtToken}` };
   // Documents at or under this page count are fed to the model in full (no
@@ -42,15 +56,28 @@ function createContextHandlers(req, userMessageContent) {
     }
   };
 
+  /**
+   * Returns a tagged result describing how the file's content should appear:
+   * - `full`: the entire document text (small docs).
+   * - `retrieval`: top-K semantic-search pairs (large docs, non-agent).
+   * - `search`: nothing inlined; announce only and defer to the file_search
+   *   tool (large docs, agent mode).
+   */
   const query = async (file) => {
     const pages = await getPageCount(file);
     if (pages <= fullContextMaxPages) {
-      return axios.get(`${process.env.RAG_API_URL}/documents/${file.file_id}/context`, {
-        headers,
-      });
+      const { data } = await axios.get(
+        `${process.env.RAG_API_URL}/documents/${file.file_id}/context`,
+        { headers },
+      );
+      return { mode: 'full', data };
     }
 
-    return axios.post(
+    if (agentMode) {
+      return { mode: 'search', data: null };
+    }
+
+    const { data } = await axios.post(
       `${process.env.RAG_API_URL}/query`,
       {
         file_id: file.file_id,
@@ -61,6 +88,7 @@ function createContextHandlers(req, userMessageContent) {
         headers: { ...headers, 'Content-Type': 'application/json' },
       },
     );
+    return { mode: 'retrieval', data };
   };
 
   const processFile = async (file) => {
@@ -115,7 +143,6 @@ function createContextHandlers(req, userMessageContent) {
           : resolvedQueries
               .map((queryResult, index) => {
                 const file = processedFiles[index];
-                let contextItems = queryResult.data;
 
                 const generateContext = (currentContext) =>
                   `
@@ -125,13 +152,22 @@ function createContextHandlers(req, userMessageContent) {
             </context>
           </file>`;
 
-                // Full-context responses are a plain string; retrieval
-                // responses are an array of [doc, distance] pairs.
-                if (typeof contextItems === 'string') {
-                  return generateContext(`\n${contextItems}`);
+                // Full document text (small files).
+                if (queryResult.mode === 'full') {
+                  injectedFileIds.push(file.file_id);
+                  return generateContext(`\n${queryResult.data}`);
                 }
 
-                contextItems = queryResult.data
+                // Large file on an agent: not inlined; the file_search tool
+                // reads it on demand. Announce so the model knows to search.
+                if (queryResult.mode === 'search') {
+                  return generateContext(
+                    `\n[This document is too large to inline. Use the file_search tool to retrieve relevant passages from it.]`,
+                  );
+                }
+
+                // Top-K retrieval pairs (large files, non-agent endpoints).
+                const contextItems = (queryResult.data ?? [])
                   .map((item) => {
                     const pageContent = item[0].page_content;
                     return `
@@ -168,6 +204,7 @@ function createContextHandlers(req, userMessageContent) {
   return {
     processFile,
     createContext,
+    getInjectedFileIds: () => injectedFileIds,
   };
 }
 

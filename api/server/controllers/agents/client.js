@@ -297,11 +297,17 @@ class AgentClient extends BaseClient {
       this.options.attachments = files;
     }
 
-    /** Note: Bedrock uses legacy RAG API handling */
-    if (this.message_file_map && !isAgentsEndpoint(this.options.endpoint)) {
+    /**
+     * Wire up RAG/File Search context injection. For the agents endpoint we run
+     * in `agentMode`: small docs are inlined in full, large docs are announced
+     * and left to the `file_search` tool (rather than top-K retrieval injected
+     * here). Non-agent endpoints keep their original full/retrieval behavior.
+     */
+    if (this.message_file_map) {
       this.contextHandlers = createContextHandlers(
         this.options.req,
         orderedMessages[orderedMessages.length - 1].text,
+        { agentMode: isAgentsEndpoint(this.options.endpoint) },
       );
     }
 
@@ -399,6 +405,16 @@ class AgentClient extends BaseClient {
       this.augmentedPrompt = await this.contextHandlers.createContext();
       if (this.augmentedPrompt) {
         sharedRunContextParts.push(this.augmentedPrompt);
+      }
+      /**
+       * Record files inlined in full so primeResources drops them from the
+       * file_search tool resource — their text is already in context, so the
+       * tool would be redundant. Large docs keep the tool. Shared via `req`
+       * since primeResources (initializeAgent) runs later in the same request.
+       */
+      const injectedFileIds = this.contextHandlers.getInjectedFileIds?.() ?? [];
+      if (injectedFileIds.length && this.options.req) {
+        this.options.req.fullyInjectedFileIds = new Set(injectedFileIds);
       }
     }
 
