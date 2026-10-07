@@ -43,6 +43,7 @@ import { registerCodeExecutionTools } from './tools';
 import { primeResources } from './resources';
 import type { ResolvedManualSkill, ResolvedAlwaysApplySkill } from './skills';
 import type { TFilterFilesByAgentAccess } from './resources';
+import { applyModelPolicy } from './policy';
 
 /**
  * Fraction of context budget reserved as headroom when no explicit maxContextTokens is set.
@@ -463,10 +464,14 @@ export async function initializeAgent(
   let currentFiles: IMongoFile[] | undefined;
 
   const _modelOptions = structuredClone(
-    Object.assign(
-      { model: agent.model },
-      agent.model_parameters ?? { model: agent.model },
-      isInitialAgent === true ? endpointOption?.model_parameters : {},
+    applyModelPolicy(
+      Object.assign(
+        { model: agent.model },
+        agent.model_parameters ?? { model: agent.model },
+        isInitialAgent === true ? endpointOption?.model_parameters : {},
+      ),
+      agent.provider,
+      req.config?.config?.modelPolicy,
     ),
   );
 

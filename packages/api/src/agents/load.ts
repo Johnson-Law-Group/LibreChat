@@ -14,6 +14,7 @@ import type {
   Agent,
 } from 'librechat-data-provider';
 import { getCustomEndpointConfig } from '~/app/config';
+import { applyAgentModelPolicy, applyModelPolicy } from './policy';
 
 const { mcp_all, mcp_delimiter } = Constants;
 type ModelParametersWithPromptPrefix = AgentModelParameters & { promptPrefix?: string | null };
@@ -48,7 +49,9 @@ export async function loadEphemeralAgent(
   { req, spec, endpoint, model_parameters: _m }: Omit<LoadAgentParams, 'agent_id'>,
   deps: LoadAgentDeps,
 ): Promise<Agent | null> {
-  const { model, ...model_parameters } = _m ?? ({} as unknown as AgentModelParameters);
+  const { model, ...model_parameters } = applyModelPolicy<
+    Partial<AgentModelParameters> & { model?: string }
+  >(_m ?? {}, endpoint, req.config?.config?.modelPolicy);
   const modelSpecs = req.config?.modelSpecs as { list?: TModelSpec[] } | undefined;
   let modelSpec: TModelSpec | null = null;
   if (spec != null && spec !== '') {
@@ -163,5 +166,5 @@ export async function loadAgent(
   // Set version count from versions array length
   const agentWithVersion = agent as Agent & { versions?: unknown[]; version?: number };
   agentWithVersion.version = agentWithVersion.versions ? agentWithVersion.versions.length : 0;
-  return agent;
+  return applyAgentModelPolicy(agent, req.config?.config?.modelPolicy);
 }

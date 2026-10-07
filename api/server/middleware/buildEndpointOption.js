@@ -4,6 +4,7 @@ const {
   findModelSpecByName,
   isModelSpecEndpointMatch,
   resolveModelSpecPromptPrefixVariables,
+  applyModelPolicy,
 } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const {
@@ -123,6 +124,7 @@ async function buildEndpointOption(req, res, next) {
   }
 
   try {
+    parsedBody = applyModelPolicy(parsedBody, endpoint, appConfig.config?.modelPolicy);
     const builder = isAgents
       ? (...args) => buildFunction[EModelEndpoint.agents](req, ...args)
       : buildFunction[endpointType ?? endpoint];

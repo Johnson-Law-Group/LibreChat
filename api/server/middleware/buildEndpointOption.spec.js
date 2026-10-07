@@ -59,6 +59,35 @@ const createRes = () => ({
   json: jest.fn().mockReturnThis(),
 });
 
+describe('buildEndpointOption - model retirement policy', () => {
+  it('rewrites a stale tab model and oversized budget before building the endpoint', async () => {
+    jest.clearAllMocks();
+    mockGetEndpointsConfig.mockResolvedValue({ JLG: { type: EModelEndpoint.custom } });
+    const req = createReq(
+      {
+        endpoint: 'JLG',
+        endpointType: 'custom',
+        spec: 'gpt-5.3-chat-latest',
+        model: 'gpt-5.4',
+        maxContextTokens: 400000,
+      },
+      {
+        config: {
+          modelPolicy: { maxContextTokens: 64000, aliases: { JLG: { 'gpt-5.4': 'gpt-6.1-sol' } } },
+        },
+        modelSpecs: { list: [] },
+      },
+    );
+    const next = jest.fn();
+    req.baseUrl = '/api/agents/chat';
+    await buildEndpointOption(req, createRes(), next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.body.endpointOption).toEqual(
+      expect.objectContaining({ model: 'gpt-6.1-sol', maxContextTokens: 64000 }),
+    );
+  });
+});
+
 describe('buildEndpointOption - defaultParamsEndpoint parsing', () => {
   beforeEach(() => {
     jest.clearAllMocks();

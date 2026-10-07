@@ -242,6 +242,28 @@ describe('custom endpoint stream usage defaults', () => {
 // Suite 1: reserveRatio
 // ---------------------------------------------------------------------------
 describe('reserveRatio', () => {
+  it('enforces the server cap even when a stored agent or request supplies a larger context', async () => {
+    const appConfig = makeAppConfig([]);
+    appConfig.config.modelPolicy = { maxContextTokens: 64_000 };
+    const agents = await callAndCapture({
+      agents: [makeAgent({ maxContextTokens: 400_000, baseContextTokens: 1_000_000 })],
+      appConfig,
+      summarizationConfig: { reserveRatio: 0.05, provider: 'openAI', model: 'gpt-6.1-sol' },
+    });
+    expect(agents[0].maxContextTokens).toBe(64_000);
+    expect(agents[0].summarizationEnabled).toBe(true);
+  });
+
+  it('keeps smaller agent budgets under the server cap', async () => {
+    const appConfig = makeAppConfig([]);
+    appConfig.config.modelPolicy = { maxContextTokens: 64_000 };
+    const agents = await callAndCapture({
+      agents: [makeAgent({ maxContextTokens: 32_000 })],
+      appConfig,
+    });
+    expect(agents[0].maxContextTokens).toBe(32_000);
+  });
+
   it('applies ratio from config using baseContextTokens, capped at maxContextTokens', async () => {
     const agents = await callAndCapture({
       agents: [makeAgent({ baseContextTokens: 200_000, maxContextTokens: 200_000 })],

@@ -52,6 +52,41 @@
 </p>
 
 
+## Server model policy (JLG fork)
+
+`modelPolicy` in `librechat.yaml` applies endpoint-scoped model replacements and
+a context budget to every request, including saved conversations and stale
+browser tabs. Aliases resolve before model validation and can form chains for
+successive retirements. Cycles are rejected at startup. Replacement models must
+be available in the endpoint configuration and gateway. Stored messages and
+agent version history are preserved; runtime agents use the replacement model.
+
+```yaml
+modelPolicy:
+  maxContextTokens: 64000
+  aliases:
+    JLG:
+      gpt-5.4: gpt-6.1-sol
+      gpt-5.6-terra: gpt-6.1-sol
+
+summarization:
+  enabled: true
+  provider: JLG
+  model: gpt-6.1-sol
+  maxSummaryTokens: 4096
+  parameters:
+    useResponsesApi: true
+    reasoning:
+      effort: low
+```
+
+The cap is applied to request parameters, loaded agents, and graph budgets;
+smaller valid budgets remain unchanged. Agent SDK summarization uses the
+top-level `summarization` block and fires when history exceeds the budget.
+The active response stores the checkpoint for subsequent turns. Endpoint
+`summaryModel` does not configure this SDK path. Omit `modelPolicy` to retain
+the existing behavior.
+
 # ✨ Features
 
 - 🖥️ **UI & Experience** inspired by ChatGPT with enhanced design and features

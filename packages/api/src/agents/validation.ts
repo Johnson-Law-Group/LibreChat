@@ -2,13 +2,15 @@ import { z } from 'zod';
 import { MAX_SUBAGENTS, ViolationTypes, ErrorTypes } from 'librechat-data-provider';
 import type { Agent, TModelsConfig } from 'librechat-data-provider';
 import type { Request, Response } from 'express';
+import type { AppConfig } from '@librechat/data-schemas';
+import { applyAgentModelPolicy } from './policy';
 
 /**
  * Permissive Request alias used by {@link validateAgentModel}. Accepts either
  * the default Express `Request` or the project-specific `ServerRequest`
  * (see `~/types/http`), whose `params` type is widened to `unknown`.
  */
-type LooseRequest = Request<unknown, unknown, unknown>;
+type LooseRequest = Request<unknown, unknown, unknown> & { config?: AppConfig };
 
 /** Avatar schema shared between create and update */
 export const agentAvatarSchema = z.object({
@@ -162,6 +164,7 @@ export async function validateAgentModel(
   params: ValidateAgentModelParams,
 ): Promise<ValidateAgentModelResult> {
   const { req, res, agent, modelsConfig, logViolation } = params;
+  Object.assign(agent, applyAgentModelPolicy(agent, req.config?.config?.modelPolicy));
   const { model, provider: endpoint } = agent;
 
   if (!model) {

@@ -35,6 +35,7 @@ import { getProviderConfig } from '~/endpoints/config/providers';
 import { resolveHeaders, createSafeUser } from '~/utils/env';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
 import { isUserProvided } from '~/utils/common';
+import { applyModelPolicy } from './policy';
 
 /** Expected shape of JSON tool search results */
 interface ToolSearchJsonResult {
@@ -940,11 +941,17 @@ export async function createRun({
       toolDefinitions = toolDefinitions.map((def) => ({ ...def }));
     }
 
-    const effectiveMaxContextTokens = computeEffectiveMaxContextTokens(
-      summarization.reserveRatio,
-      agent.baseContextTokens,
-      agent.maxContextTokens,
-    );
+    const effectiveMaxContextTokens = applyModelPolicy(
+      {
+        maxContextTokens: computeEffectiveMaxContextTokens(
+          summarization.reserveRatio,
+          agent.baseContextTokens,
+          agent.maxContextTokens,
+        ),
+      },
+      agent.endpoint ?? agent.provider,
+      appConfig?.config?.modelPolicy,
+    ).maxContextTokens;
 
     const reasoningKey = getReasoningKey(provider, llmConfig, agent.endpoint);
     return {

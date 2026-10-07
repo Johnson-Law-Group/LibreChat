@@ -1366,7 +1366,17 @@ export const summarizationConfigSchema = z.object({
   enabled: z.boolean().optional(),
   provider: z.string().optional(),
   model: z.string().optional(),
-  parameters: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  parameters: z
+    .record(
+      z.union([
+        z.string(),
+        z.number(),
+        z.boolean(),
+        z.null(),
+        z.object({ effort: z.string(), summary: z.string().optional() }),
+      ]),
+    )
+    .optional(),
   trigger: summarizationTriggerSchema.optional(),
   prompt: z.string().optional(),
   updatePrompt: z.string().optional(),
@@ -1379,6 +1389,32 @@ export type SummarizationConfig = z.infer<typeof summarizationConfigSchema>;
 
 const customEndpointsSchema = z.array(endpointSchema.partial()).optional();
 
+export const modelPolicySchema = z
+  .object({
+    maxContextTokens: z.number().finite().int().min(1024).optional(),
+    aliases: z.record(z.record(z.string().trim().min(1))).optional(),
+  })
+  .superRefine((policy, ctx) => {
+    for (const [endpoint, aliases] of Object.entries(policy.aliases ?? {})) {
+      for (const source of Object.keys(aliases)) {
+        const seen = new Set<string>();
+        let model = source;
+        while (Object.prototype.hasOwnProperty.call(aliases, model)) {
+          if (seen.has(model)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['aliases', endpoint, source],
+              message: 'Model aliases must not contain cycles',
+            });
+            break;
+          }
+          seen.add(model);
+          model = aliases[model];
+        }
+      }
+    }
+  });
+
 export const configSchema = z.object({
   version: z.string(),
   cache: z.boolean().default(true),
@@ -1386,6 +1422,7 @@ export const configSchema = z.object({
   webSearch: webSearchSchema.optional(),
   memory: memorySchema.optional(),
   summarization: summarizationConfigSchema.optional(),
+  modelPolicy: modelPolicySchema.optional(),
   secureImageLinks: z.boolean().optional(),
   imageOutputType: z.nativeEnum(EImageOutputType).default(EImageOutputType.PNG),
   includedTools: z.array(z.string()).optional(),

@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
-import { Constants } from 'librechat-data-provider';
+import { Constants, FileSources } from 'librechat-data-provider';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { agentSchema, createMethods } from '@librechat/data-schemas';
 import type { AgentModelParameters } from 'librechat-data-provider';
@@ -39,6 +39,71 @@ describe('loadAgent', () => {
   beforeEach(async () => {
     await Agent.deleteMany({});
     jest.clearAllMocks();
+  });
+
+  test('migrates a persisted agent at request time without rewriting its history', async () => {
+    const agentId = `agent_${uuidv4()}`;
+    await createAgent({
+      id: agentId,
+      name: 'Legacy',
+      provider: 'JLG',
+      model: 'gpt-5.4',
+      author: new mongoose.Types.ObjectId(),
+      tools: [],
+    });
+    const before = await getAgent({ id: agentId });
+    const result = await loadAgent(
+      {
+        req: {
+          config: {
+            config: {
+              modelPolicy: {
+                maxContextTokens: 64000,
+                aliases: { JLG: { 'gpt-5.4': 'gpt-6.1-sol' } },
+              },
+            },
+            fileStrategy: FileSources.local,
+            imageOutputType: 'png',
+          },
+        },
+        endpoint: 'agents',
+        agent_id: agentId,
+      },
+      deps,
+    );
+    expect(result?.id).toBe(agentId);
+    expect(result?.model).toBe('gpt-6.1-sol');
+    expect(result?.model_parameters.maxContextTokens).toBe(64000);
+    const stored = await getAgent({ id: agentId });
+    expect(stored).toEqual(before);
+  });
+
+  test('migrates an ephemeral agent model before encoding its displayed ID', async () => {
+    const result = await loadAgent(
+      {
+        req: {
+          config: {
+            config: {
+              modelPolicy: {
+                maxContextTokens: 64000,
+                aliases: { JLG: { 'gpt-5.4': 'gpt-6.1-sol' } },
+              },
+            },
+            fileStrategy: FileSources.local,
+            imageOutputType: 'png',
+          },
+        },
+        endpoint: 'JLG',
+        agent_id: Constants.EPHEMERAL_AGENT_ID,
+        model_parameters: { model: 'gpt-5.4', maxContextTokens: 400000 } as AgentModelParameters & {
+          model: string;
+        },
+      },
+      deps,
+    );
+    expect(result?.id).toBe('JLG__gpt-6.1-sol');
+    expect(result?.model).toBe('gpt-6.1-sol');
+    expect(result?.model_parameters.maxContextTokens).toBe(64000);
   });
 
   test('should return null when agent_id is not provided', async () => {
